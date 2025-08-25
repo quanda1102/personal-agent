@@ -1,0 +1,403 @@
+{
+	"info": {
+		"_postman_id": "redis-whitelist-auth-api",
+		"name": "🔐 Redis Whitelist Auth API - Complete",
+		"description": "Complete authentication API with Redis token whitelist: register, login, refresh, and logout",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "✅ Complete Authentication Flow",
+			"item": [
+				{
+					"name": "1. Register New User",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', () => {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Registration successful', () => {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.is_success).to.be.true;",
+									"    pm.expect(json.message).to.eql('User registered successfully');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"completeuser\",\n    \"email\": \"completeuser@example.com\",\n    \"password\": \"securepass123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/register",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"auth",
+								"register"
+							]
+						}
+					}
+				},
+				{
+					"name": "2. Login User",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', () => {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Login successful with tokens', () => {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.is_success).to.be.true;",
+									"    pm.expect(json.message).to.eql('Login successful');",
+									"    pm.expect(json.data).to.have.property('access_token');",
+									"    pm.expect(json.data).to.have.property('refresh_token');",
+									"    ",
+									"    // Store tokens",
+									"    pm.collectionVariables.set('access_token', json.data.access_token);",
+									"    pm.collectionVariables.set('refresh_token', json.data.refresh_token);",
+									"    ",
+									"    console.log('✅ Tokens stored for subsequent requests');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"email\": \"completeuser@example.com\",\n    \"password\": \"securepass123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"auth",
+								"login"
+							]
+						}
+					}
+				},
+				{
+					"name": "3. Refresh Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', () => {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Token refresh successful', () => {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.is_success).to.be.true;",
+									"    pm.expect(json.message).to.eql('Tokens refreshed successfully');",
+									"    pm.expect(json.data).to.have.property('access_token');",
+									"    pm.expect(json.data).to.have.property('refresh_token');",
+									"    ",
+									"    // Update tokens (rotation)",
+									"    pm.collectionVariables.set('access_token', json.data.access_token);",
+									"    pm.collectionVariables.set('refresh_token', json.data.refresh_token);",
+									"    ",
+									"    console.log('✅ Token rotation completed');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{refresh_token}}",
+								"description": "Refresh token in Authorization header"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/refresh",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"auth",
+								"refresh"
+							]
+						}
+					}
+				},
+				{
+					"name": "4. Logout User (Secure Access Token) ⭐",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', () => {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Logout successful', () => {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.is_success).to.be.true;",
+									"    pm.expect(json.message).to.eql('Logout successful');",
+									"    pm.expect(json.data.message).to.eql('All tokens have been revoked');",
+									"    ",
+									"    // Clear stored tokens",
+									"    pm.collectionVariables.set('access_token', '');",
+									"    pm.collectionVariables.set('refresh_token', '');",
+									"    ",
+									"    console.log('✅ User logged out, tokens cleared');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"description": "Access token for secure logout"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/logout",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"auth",
+								"logout"
+							]
+						}
+					}
+				},
+				{
+					"name": "5. Try Access Token After Logout (Should Fail)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', () => {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Access token fails after logout', () => {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.is_success).to.be.false;",
+									"    pm.expect(json.message).to.eql('Logout failed');",
+									"    pm.expect(json.error).to.include('not whitelisted');",
+									"    ",
+									"    console.log('✅ Token correctly revoked - access blocked');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"// This test uses the previously stored access token",
+									"// which should now be removed from whitelist after logout"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{access_token}}",
+								"description": "Previously revoked access token"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/logout",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"auth",
+								"logout"
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "❌ Error Cases",
+			"item": [
+				{
+					"name": "Logout - Invalid Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', () => {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Logout fails with invalid token', () => {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.is_success).to.be.false;",
+									"    pm.expect(json.message).to.eql('Logout failed');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer invalid.access.token.here"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/logout",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"auth",
+								"logout"
+							]
+						}
+					}
+				},
+				{
+					"name": "Logout - Missing Authorization Header",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 422', () => {",
+									"    pm.response.to.have.status(422);",
+									"});",
+									"",
+									"pm.test('Missing header validation error', () => {",
+									"    const json = pm.response.json();",
+									"    pm.expect(json.is_success).to.be.false;",
+									"    pm.expect(json.error).to.eql('VALIDATION_ERROR');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/logout",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"auth",
+								"logout"
+							]
+						}
+					}
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"console.log('🔐 Testing Complete Auth API with Logout');"
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Global assertions",
+					"pm.test('Response is JSON', () => {",
+					"    pm.response.to.be.json;",
+					"});"
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "access_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "refresh_token",
+			"value": "",
+			"type": "string"
+		}
+	]
+}

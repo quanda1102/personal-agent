@@ -1,0 +1,376 @@
+_format_version: "3.0"
+_transform: true
+
+# Production Kong Configuration
+# This file contains production-specific settings with enhanced security
+
+services:
+  - name: auth-service-prod
+    url: http://user-service:8000
+    retries: 5
+    connect_timeout: 60000
+    write_timeout: 60000
+    read_timeout: 60000
+    tags:
+      - auth
+      - microservice
+      - production
+    
+    routes:
+      # Public authentication endpoints
+      - name: auth-register-prod
+        paths:
+          - /api/v1/auth/register
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: false
+        tags:
+          - auth
+          - public
+          - production
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 5
+              hour: 50
+              day: 1000
+              policy: redis
+              redis_host: redis-cache
+              redis_port: 6379
+              redis_password: Aikido202
+              fault_tolerant: true
+          - name: request-size-limiting
+            config:
+              allowed_payload_size: 512
+          - name: bot-detection
+            config:
+              allow: []
+              deny: ["*bot*", "*crawler*", "*spider*"]
+
+      - name: auth-login-prod
+        paths:
+          - /api/v1/auth/login
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: false
+        tags:
+          - auth
+          - public
+          - production
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 3
+              hour: 30
+              day: 500
+              policy: redis
+              redis_host: redis-cache
+              redis_port: 6379
+              redis_password: Aikido202
+              fault_tolerant: true
+          - name: request-size-limiting
+            config:
+              allowed_payload_size: 512
+
+      # Protected endpoints
+      - name: auth-refresh-prod
+        paths:
+          - /api/v1/auth/refresh
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: false
+        tags:
+          - auth
+          - protected
+          - production
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 10
+              hour: 100
+              policy: redis
+              redis_host: redis-cache
+              redis_port: 6379
+              redis_password: Aikido202
+
+      - name: auth-logout-prod
+        paths:
+          - /api/v1/auth/logout
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: false
+        tags:
+          - auth
+          - protected
+          - production
+        plugins:
+          - name: kong-auth-validator
+            config:
+              auth_service_url: http://user-service:8000/api/v1/auth/validate
+              cache_ttl: 300
+
+      - name: auth-user-info-prod
+        paths:
+          - /api/v1/auth/user-info
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: false
+        tags:
+          - auth
+          - protected
+          - production
+        plugins:
+          - name: kong-auth-validator
+            config:
+              auth_service_url: http://user-service:8000/api/v1/auth/validate
+              cache_ttl: 600
+          - name: rate-limiting
+            config:
+              minute: 30
+              hour: 500
+              policy: redis
+              redis_host: redis-cache
+              redis_port: 6379
+              redis_password: Aikido202
+
+      - name: auth-permissions-prod
+        paths:
+          - /api/v1/auth/permissions
+        methods:
+          - GET
+        strip_path: false
+        preserve_host: false
+        tags:
+          - auth
+          - protected
+          - production
+        plugins:
+          - name: kong-auth-validator
+            config:
+              auth_service_url: http://user-service:8000/api/v1/auth/validate
+              cache_ttl: 600
+
+      # Kong internal endpoints (heavily restricted)
+      - name: auth-validate-prod
+        paths:
+          - /api/v1/auth/validate
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: false
+        tags:
+          - auth
+          - internal
+          - production
+        plugins:
+          - name: ip-restriction
+            config:
+              allow:
+                - 10.0.0.0/8
+                - 172.16.0.0/12
+                - 192.168.0.0/16
+          - name: key-auth
+            config:
+              key_names:
+                - X-API-Key
+          - name: rate-limiting
+            config:
+              minute: 1000
+              hour: 10000
+              policy: local
+
+      - name: auth-introspect-prod
+        paths:
+          - /api/v1/auth/introspect
+        methods:
+          - POST
+        strip_path: false
+        preserve_host: false
+        tags:
+          - auth
+          - oauth2
+          - production
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 30
+              hour: 500
+              policy: redis
+              redis_host: redis-cache
+              redis_port: 6379
+              redis_password: Aikido202
+
+# Production Global Plugins
+plugins:
+  # Strict CORS for production
+  - name: cors
+    config:
+      origins:
+        - "https://yourdomain.com"
+        - "https://app.yourdomain.com"
+        - "https://admin.yourdomain.com"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - PATCH
+      headers:
+        - Accept
+        - Authorization
+        - Content-Type
+        - X-Requested-With
+      exposed_headers:
+        - X-User-ID
+        - X-User-Roles
+        - X-Request-ID
+      credentials: true
+      max_age: 86400
+    tags:
+      - global
+      - cors
+      - production
+
+  # Request tracing
+  - name: request-id
+    config:
+      header_name: X-Request-ID
+      echo_downstream: true
+      generator: uuid
+    tags:
+      - global
+      - tracing
+      - production
+
+  # Security headers
+  - name: response-transformer
+    config:
+      add:
+        headers:
+          - "X-Content-Type-Options: nosniff"
+          - "X-Frame-Options: DENY"
+          - "X-XSS-Protection: 1; mode=block"
+          - "Strict-Transport-Security: max-age=31536000; includeSubDomains"
+          - "Referrer-Policy: strict-origin-when-cross-origin"
+    tags:
+      - global
+      - security
+      - production
+
+  # Production logging (structured)
+  - name: http-log
+    config:
+      http_endpoint: "https://your-log-collector.com/kong-logs"
+      method: POST
+      timeout: 1000
+      keepalive: 1000
+      content_type: application/json
+      headers:
+        Authorization: "Bearer your-log-token"
+    tags:
+      - global
+      - logging
+      - production
+
+# Production upstreams with health checks
+upstreams:
+  - name: auth-upstream-prod
+    algorithm: least-connections
+    hash_on: header
+    hash_on_header: X-User-ID
+    healthchecks:
+      active:
+        type: http
+        http_path: /health
+        timeout: 5
+        concurrency: 5
+        healthy:
+          interval: 15
+          http_statuses: [200, 302]
+          successes: 2
+        unhealthy:
+          interval: 15
+          http_statuses: [429, 500, 502, 503, 504]
+          tcp_failures: 2
+          timeouts: 2
+          http_failures: 3
+      passive:
+        type: http
+        healthy:
+          http_statuses: [200, 201, 202, 203, 204, 205, 206, 300, 301, 302, 303, 304, 305, 306, 307, 308]
+          successes: 3
+        unhealthy:
+          http_statuses: [429, 500, 502, 503, 504]
+          tcp_failures: 2
+          timeouts: 2
+          http_failures: 3
+    targets:
+      - target: user-service:8000
+        weight: 100
+    tags:
+      - auth
+      - upstream
+      - production
+
+# Production consumers with API keys
+consumers:
+  - username: kong-internal-prod
+    custom_id: kong-system-prod
+    tags:
+      - internal
+      - system
+      - production
+    plugins:
+      - name: key-auth
+        config:
+          key_names:
+            - X-API-Key
+    keyauth_credentials:
+      - key: prod-kong-internal-key-2024-secure
+        tags:
+          - internal
+          - production
+
+  - username: monitoring-system
+    custom_id: monitoring-001
+    tags:
+      - monitoring
+      - production
+    plugins:
+      - name: key-auth
+        config:
+          key_names:
+            - X-API-Key
+    keyauth_credentials:
+      - key: prod-monitoring-key-2024-secure
+        tags:
+          - monitoring
+          - production
+
+# Production certificates (placeholder - configure with real certs)
+certificates:
+  - cert: |
+      -----BEGIN CERTIFICATE-----
+      # Your production SSL certificate here
+      -----END CERTIFICATE-----
+    key: |
+      -----BEGIN PRIVATE KEY-----
+      # Your production private key here
+      -----END PRIVATE KEY-----
+    tags:
+      - production
+      - ssl
+
+# SNI configuration for SSL
+snis:
+  - name: yourdomain.com
+    certificate:
+      id: # Certificate ID from above
+    tags:
+      - production
+      - ssl
