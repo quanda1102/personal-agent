@@ -1,0 +1,34 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+*.pyc
+*.pyo
+build/
+dist/
+wheels/
+*.egg-info
+.pytest_cache/
+
+# OS files
+.DS_Store
+
+# Large / downloaded models (paths match src/s2s/*.py)
+tts_model/
+vi-tts-model/
+voice_model/
+
+# Virtual environments
+.venv
+
+# Local secrets (use .env.example as template)
+.env
+
+# Runtime data — memory DB, overflow files, logs
+data/
+.tmp_hb_vault/
+.heartbeat/
+
+# Tests
+.tests/
+.cache/
+pytestdebug.log

@@ -1,0 +1,31 @@
+[project]
+name = "home-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6.0.2",
+    "openai>=2.26.0",
+    "python-dotenv>=1.2.2",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "websockets>=13.0",
+    "requests>=2.32.5",
+    "mlx-lm>=0.31.1",
+    "soundfile>=0.13.1",
+    "numpy>=2.4.3",
+    "onnxruntime==1.23.2",
+    "sherpa-onnx>=1.12.29",
+    "mlx-audio>=0.4.1",
+    "f5-tts>=1.1.17",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Home Agent — chat</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #3d8bfd;
+      --user: #2d4a3e;
+      --assistant: #243044;
+      --tool: #2a2538;
+      --error: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 0.75rem 1rem;
+      background: var(--panel);
+      border-bottom: 1px solid #2a3544;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    header h1 { font-size: 1rem; font-weight: 600; margin: 0; margin-right: auto; }
+    header label { font-size: 0.75rem; color: var(--muted); }
+    header input[type="text"] {
+      width: 12rem;
+      padding: 0.35rem 0.5rem;
+      border-radius: 6px;
+      border: 1px solid #2a3544;
+      background: var(--bg);
+      color: var(--text);
+    }
+    #ws-pill {
+      font-size: 0.7rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 999px;
+      background: #2a3544;
+      color: var(--muted);
+    }
+    #ws-pill.ok { background: #1e3d2f; color: #86efac; }
+    #ws-pill.bad { background: #3d2020; color: var(--error); }
+    .workspace {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      width: 100%;
+    }
+    .chat-col {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    #log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      width: 100%;
+    }
+    .insight-col {
+      width: 26rem;
+      max-width: 42vw;
+      border-left: 1px solid #2a3544;
+      background: #121820;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .insight-head {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 0.45rem 0.6rem 0;
+    }
+    #agentTimeline {
+      padding: 0 0.5rem 0.5rem;
+      border-bottom: 1px solid #2a3544;
+      max-height: 42vh;
+      overflow-y: auto;
+    }
+    .timeline-step {
+      border-left: 3px solid #3d8bfd;
+      padding: 0.25rem 0 0.25rem 0.45rem;
+      margin: 0.4rem 0;
+      background: rgba(61, 139, 253, 0.06);
+      border-radius: 0 6px 6px 0;
+    }
+    .timeline-step.tool { border-left-color: #a78bfa; background: rgba(167, 139, 250, 0.08); }
+    .timeline-step.ok { border-left-color: #34d399; }
+    .timeline-step.err { border-left-color: #f87171; }
+    .timeline-step .tag {
+      font-size: 0.6rem;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .timeline-step .body {
+      font-size: 0.72rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-top: 0.15rem;
+      max-height: 10rem;
+      overflow-y: auto;
+    }
+    #hbWorkflowRender {
+      padding: 0 0.6rem 0.75rem;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    #hbWorkflowRender pre.wf-pre {
+      background: var(--bg);
+      border: 1px solid #2a3544;
+      border-radius: 6px;
+      padding: 0.45rem;
+      max-height: 11rem;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0.35rem 0;
+      font-size: 0.68rem;
+    }
+    #ws-last-in {
+      font-size: 0.65rem;
+      color: var(--muted);
+      padding: 0 0.5rem 0.35rem;
+      line-height: 1.35;
+      word-break: break-all;
+    }
+    #ws-last-in code { font-size: 0.62rem; }
+    .wf-btns { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0 0.5rem; }
+    @media (max-width: 960px) {
+      .workspace { flex-direction: column; }
+      .insight-col { width: 100%; max-width: none; border-left: none; border-top: 1px solid #2a3544; max-height: none; }
+      #agentTimeline { max-height: 28vh; }
+    }
+    .msg {
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      max-width: 100%;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.95rem;
+      line-height: 1.45;
+    }
+    .msg.user { background: var(--user); align-self: flex-end; }
+    .msg.assistant { background: var(--assistant); align-self: flex-start; min-height: 1.2em; }
+    .msg.tool { background: var(--tool); font-size: 0.8rem; color: var(--muted); align-self: stretch; }
+    .msg.meta {
+      font-size: 0.8rem;
+      color: var(--muted);
+      background: transparent;
+      padding: 0 0.5rem;
+    }
+    .msg.error { background: #3d2020; color: var(--error); }
+    .msg.warn { background: #2d2a1e; color: #fcd34d; }
+    footer {
+      padding: 0.75rem 1rem 1rem;
+      background: var(--panel);
+      border-top: 1px solid #2a3544;
+      width: 100%;
+    }
+    #input {
+      width: 100%;
+      min-height: 4.5rem;
+      padding: 0.6rem 0.75rem;
+      border-radius: 8px;
+      border: 1px solid #2a3544;
+      background: var(--bg);
+      color: var(--text);
+      resize: vertical;
+      font: inherit;
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+    button {
+      padding: 0.45rem 0.9rem;
+      border-radius: 8px;
+      border: none;
+      font-weight: 500;
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    button.primary { background: var(--accent); color: #fff; }
+    button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary { background: #2a3544; color: var(--text); }
+    button.danger { background: #7f1d1d; color: #fecaca; }
+    #status { font-size: 0.75rem; color: var(--muted); margin-top: 0.35rem; }
+    details.hb { margin-top: 0.75rem; padding: 0.5rem 0; border-top: 1px solid #2a3544; }
+    details.hb summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; user-select: none; }
+    details.hb .hb-row { margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; font-size: 0.8rem; color: var(--muted); }
+    details.hb label { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
+    #hbOut {
+      margin-top: 0.5rem;
+      max-height: 14rem;
+      overflow: auto;
+      background: var(--bg);
+      border: 1px solid #2a3544;
+      border-radius: 8px;
+      padding: 0.5rem 0.65rem;
+      font-size: 0.75rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Home Agent</h1>
+    <span id="ws-pill">WS …</span>
+    <label>Session <input type="text" id="session" placeholder="browser-1" /></label>
+    <button type="button" class="secondary" id="reconnect" style="font-size:0.75rem;padding:0.25rem 0.5rem">Reconnect</button>
+    <span id="model-hint" style="font-size:0.75rem;color:var(--muted)"></span>
+  </header>
+  <div class="workspace">
+    <div class="chat-col">
+      <main id="log" aria-live="polite"></main>
+    </div>
+    <aside class="insight-col">
+      <div class="insight-head">Agent — từng bước (WebSocket)</div>
+      <div id="ws-last-in">
+        WS: chưa có tin từ server (kết nối xong sẽ hiện loại tin cuối). Thêm <code>?wsdebug=1</code> vào URL → console log mọi gói vào.
+      </div>
+      <div class="wf-btns">
+        <button type="button" class="secondary" id="timelineClear" style="font-size:0.7rem;padding:0.2rem 0.45rem">Xóa timeline</button>
+      </div>
+      <div id="agentTimeline"></div>
+      <div class="insight-head">Heartbeat — tái hiện workflow (vault)</div>
+      <div class="wf-btns">
+        <button type="button" class="secondary" id="hbRefreshWorkflow" style="font-size:0.7rem;padding:0.2rem 0.45rem">Làm mới snapshot</button>
+      </div>
+      <div id="hbWorkflowRender">Bấm «Làm mới snapshot» để đọc .heartbeat/ trên vault.</div>
+    </aside>
+  </div>
+  <footer>
+    <textarea id="input" placeholder="Message… Enter send · Shift+Enter newline"></textarea>
+    <div class="actions">
+      <button type="button" class="primary" id="send">Send</button>
+      <button type="button" class="danger" id="cancel" disabled>Cancel run</button>
+      <button type="button" class="secondary" id="clear">Clear history</button>
+      <button type="button" class="secondary" id="newSession">New session</button>
+    </div>
+    <div id="status"></div>
+    <details class="hb" id="hbPanel">
+      <summary>Heartbeat test (chạy giống cron / kiểm tra nhanh)</summary>
+      <div class="hb-row">
+        <label><input type="checkbox" id="hbNoLlm" checked /> Stub (—no-llm, không tốn API)</label>
+        <label><input type="checkbox" id="hbPlanOnly" /> Chỉ plan (--plan-only)</label>
+        <label>mode <input type="text" id="hbMode" value="on-demand" style="width:7rem;padding:0.2rem 0.35rem;border-radius:4px;border:1px solid #2a3544;background:var(--bg);color:var(--text)" /></label>
+        <button type="button" class="secondary" id="hbRun">Chạy heartbeat</button>
+      </div>
+      <pre id="hbOut"></pre>
+    </details>
+  </footer>
+  <script>
+(function () {
+  const log = document.getElementById("log");
+  const input = document.getElementById("input");
+  const sessionEl = document.getElementById("session");
+  const sendBtn = document.getElementById("send");
+  const cancelBtn = document.getElementById("cancel");
+  const statusEl = document.getElementById("status");
+  const modelHint = document.getElementById("model-hint");
+  const wsPill = document.getElementById("ws-pill");
+  const agentTimeline = document.getElementById("agentTimeline");
+  const hbWorkflowRender = document.getElementById("hbWorkflowRender");
+
+  let ws = null;
+  let wsSession = "";
+  let assistantEl = null;
+  let runInFlight = false;
+  /** True while sendMessage is awaiting connect / sending — blocks double Enter / double click */
+  let isOutbound = false;
+  /** `.body` element đang nhận `text_delta` cho lượt stream hiện tại */
+  let timelineTextEl = null;
+
+  function defaultSession() {
+    return "browser-" + Math.random().toString(36).slice(2, 10);
+  }
+  if (!sessionEl.value) sessionEl.value = defaultSession();
+
+  var wsDebug =
+    typeof location !== "undefined" &&
+    /[?&]wsdebug=1(?:&|$)/.test(location.search || "");
+
+  function append(kind, text) {
+    const div = document.createElement("div");
+    div.className = "msg " + kind;
+    div.textContent = text;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    return div;
+  }
+
+  function setWsPill(ok, text) {
+    wsPill.textContent = text;
+    wsPill.className = "ok";
+    if (!ok) wsPill.className = "bad";
+    if (text.indexOf("…") >= 0) wsPill.className = "";
+  }
+
+  function timelineStep(cls, tag, bodyText) {
+    const wrap = document.createElement("div");
+    wrap.className = "timeline-step " + (cls || "");
+    const tagEl = document.createElement("div");
+    tagEl.className = "tag";
+    tagEl.textContent = tag;
+    const body = document.createElement("div");
+    body.className = "body";
+    if (bodyText !== undefined && bodyText !== null) body.textContent = bodyText;
+    wrap.appendChild(tagEl);
+    wrap.appendChild(body);
+    agentTimeline.appendChild(wrap);
+    agentTimeline.scrollTop = agentTimeline.scrollHeight;
+    return body;
+  }
+
+  function appendHbSection(container, title) {
+    const h = document.createElement("div");
+    h.style.fontWeight = "600";
+    h.style.color = "var(--text)";
+    h.style.marginTop = "0.5rem";
+    h.textContent = title;
+    container.appendChild(h);
+  }
+
+  function appendHbPre(container, text) {
+    const pre = document.createElement("pre");
+    pre.className = "wf-pre";
+    pre.textContent = text || "";
+    container.appendChild(pre);
+  }
+
+  async function refreshHeartbeatWorkflow() {
+    hbWorkflowRender.textContent = "";
+    const loading = document.createElement("div");
+    loading.textContent = "Đang tải snapshot…";
+    hbWorkflowRender.appendChild(loading);
+    try {
+      const r = await fetch("/heartbeat/workflow");
+      const j = await r.json().catch(function () {
+        return {};
+      });
+      hbWorkflowRender.textContent = "";
+      if (!r.ok) {
+        const err = document.createElement("div");
+        err.textContent =
+          "HTTP " + r.status + ": " + (j.detail != null ? String(j.detail) : JSON.stringify(j));
+        hbWorkflowRender.appendChild(err);
+        return;
+      }
+      const line = document.createElement("div");
+      line.style.marginBottom = "0.35rem";
+      line.appendChild(document.createTextNode(".heartbeat: "));
+      const exists = document.createElement("strong");
+      exists.textContent = j.heartbeat_exists ? "có" : "chưa có";
+      line.appendChild(exists);
+      hbWorkflowRender.appendChild(line);
+      const pVault = document.createElement("div");
+      pVault.style.wordBreak = "break-all";
+      pVault.appendChild(document.createTextNode("Vault: "));
+      const cVault = document.createElement("code");
+      cVault.textContent = j.vault_root || "";
+      pVault.appendChild(cVault);
+      hbWorkflowRender.appendChild(pVault);
+      const pHb = document.createElement("div");
+      pHb.style.wordBreak = "break-all";
+      pHb.style.fontSize = "0.68rem";
+      pHb.appendChild(document.createTextNode("Đường dẫn: "));
+      const cHb = document.createElement("code");
+      cHb.textContent = j.heartbeat_path || "";
+      pHb.appendChild(cHb);
+      hbWorkflowRender.appendChild(pHb);
+      const pq = document.createElement("div");
+      pq.textContent =
+        "Hàng đợi (pending): " +
+        (j.queue_pending === -1 ? "(lỗi đọc)" : String(j.queue_pending));
+      hbWorkflowRender.appendChild(pq);
+      if (j.queue_note) {
+        const qn = document.createElement("div");
+        qn.style.marginTop = "0.35rem";
+        qn.style.fontSize = "0.68rem";
+        qn.style.color = "var(--text)";
+        qn.style.lineHeight = "1.35";
+        qn.textContent = j.queue_note;
+        hbWorkflowRender.appendChild(qn);
+      }
+
+      function renderQueueList(title, items) {
+        appendHbSection(hbWorkflowRender, title);
+        if (!items || !items.length) {
+          const empty = document.createElement("div");
+          empty.style.fontSize = "0.68rem";
+          empty.textContent = "(trống)";
+          hbWorkflowRender.appendChild(empty);
+          return;
+        }
+        items.forEach(function (it) {
+          const row = document.createElement("div");
+          row.style.borderLeft = "2px solid #3d8bfd";
+          row.style.paddingLeft = "0.4rem";
+          row.style.margin = "0.35rem 0";
+          row.style.fontSize = "0.68rem";
+          const head = document.createElement("div");
+          head.style.wordBreak = "break-all";
+          head.textContent =
+            (it.status || "?") +
+            " · " +
+            (it.source || "?") +
+            " · " +
+            (it.created_at || "") +
+            " · id=" +
+            (it.id || "");
+          const act = document.createElement("div");
+          act.style.marginTop = "0.15rem";
+          act.style.whiteSpace = "pre-wrap";
+          act.style.wordBreak = "break-word";
+          act.textContent = it.action || "";
+          row.appendChild(head);
+          row.appendChild(act);
+          hbWorkflowRender.appendChild(row);
+        });
+      }
+      renderQueueList("Queue — đang chờ (pending)", j.queue_pending_items);
+      renderQueueList("Queue — gần đây (mọi trạng thái, mới nhất trước)", j.queue_recent_items);
+
+      appendHbSection(hbWorkflowRender, "Luồng heartbeat (tham chiếu)");
+      const ol = document.createElement("ol");
+      ol.style.margin = "0.25rem 0 0 1rem";
+      ol.style.padding = "0";
+      (j.flow_steps || []).forEach(function (s) {
+        const li = document.createElement("li");
+        li.style.margin = "0.2rem 0";
+        li.textContent = s;
+        ol.appendChild(li);
+      });
+      hbWorkflowRender.appendChild(ol);
+
+      appendHbSection(hbWorkflowRender, "state.json");
+      if (j.state == null) {
+        appendHbPre(hbWorkflowRender, "(không có hoặc JSON không hợp lệ)");
+      } else {
+        try {
+          appendHbPre(hbWorkflowRender, JSON.stringify(j.state, null, 2));
+        } catch (e) {
+          appendHbPre(hbWorkflowRender, String(j.state));
+        }
+      }
+
+      function artifactBlock(label, art) {
+        appendHbSection(hbWorkflowRender, label);
+        if (!art) {
+          appendHbPre(hbWorkflowRender, "(chưa có file .md)");
+          return;
+        }
+        const meta = document.createElement("div");
+        meta.style.fontSize = "0.68rem";
+        meta.textContent =
+          (art.filename || "") + " · " + (art.modified_iso || "") + " · " + (art.path_relative || "");
+        hbWorkflowRender.appendChild(meta);
+        appendHbPre(hbWorkflowRender, art.preview || "");
+      }
+      artifactBlock("Plan mới nhất (.heartbeat/plans/)", j.latest_plan);
+      artifactBlock("Log mới nhất (.heartbeat/logs/)", j.latest_log);
+    } catch (e) {
+      hbWorkflowRender.textContent = String(e);
+    }
+  }
+
+  function setRunBusy(b) {
+    runInFlight = b;
+    sendBtn.disabled = b;
+    cancelBtn.disabled = !b;
+    statusEl.textContent = b ? "Agent running…" : "";
+  }
+
+  function wsBaseUrl() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    return proto + "//" + location.host;
+  }
+
+  function wsUrl(sessionId) {
+    return wsBaseUrl() + "/ws/" + encodeURIComponent(sessionId);
+  }
+
+  function closeSocket() {
+    if (ws) {
+      try { ws.close(); } catch (_) {}
+      ws = null;
+    }
+    wsSession = "";
+  }
+
+  function connectWebSocket() {
+    const sid = sessionEl.value.trim() || defaultSession();
+    sessionEl.value = sid;
+
+    if (location.protocol === "file:") {
+      setWsPill(false, "file://");
+      append("warn", "Do not open this file directly. Run: uv run server.py  then open http://127.0.0.1:8000/");
+      return Promise.reject(new Error("file://"));
+    }
+
+    if (ws && ws.readyState === WebSocket.OPEN && wsSession === sid) {
+      setWsPill(true, "WS OK");
+      return Promise.resolve();
+    }
+
+    closeSocket();
+    setWsPill(false, "WS …");
+
+    return new Promise(function (resolve, reject) {
+      var url = wsUrl(sid);
+      var socket = new WebSocket(url);
+      var settled = false;
+
+      socket.onopen = function () {
+        settled = true;
+        ws = socket;
+        wsSession = sid;
+        setWsPill(true, "WS OK");
+        resolve();
+      };
+
+      socket.onerror = function () {
+        setWsPill(false, "WS err");
+      };
+
+      socket.onclose = function () {
+        if (!settled) {
+          settled = true;
+          reject(new Error("Could not open WebSocket — is uv run server.py running on this host?"));
+        }
+        if (ws === socket) {
+          ws = null;
+          wsSession = "";
+        }
+        setRunBusy(false);
+        setWsPill(false, "WS off");
+        statusEl.textContent = "WebSocket closed — Reconnect or Send to connect again.";
+      };
+
+      socket.onmessage = function (ev) {
+        var msg;
+        try {
+          msg = JSON.parse(ev.data);
+        } catch (e) {
+          append("error", "Bad JSON from server: " + String(ev.data).slice(0, 200));
+          return;
+        }
+        if (wsDebug && typeof console !== "undefined" && console.debug) {
+          console.debug("[ws in]", msg);
+        }
+        handleServerMessage(msg);
+      };
+    });
+  }
+
+  function startAssistantBubble() {
+    assistantEl = append("assistant", "");
+  }
+
+  function handleServerMessage(msg) {
+    var t = msg.type;
+    var lastInEl = document.getElementById("ws-last-in");
+    if (lastInEl) {
+      var sid = sessionEl.value.trim() || "(trống)";
+      lastInEl.replaceChildren();
+      var line = document.createElement("div");
+      line.textContent =
+        "WS ← " + String(t || "?") + " · session (ô header) = " + sid;
+      lastInEl.appendChild(line);
+      var hint = document.createElement("div");
+      hint.style.opacity = "0.92";
+      hint.style.marginTop = "0.25rem";
+      hint.textContent =
+        "queue_task chỉ tới khi SQLite pending có metadata.notify_session_id trùng nguyên văn session đó (GET /queue/items). Trình duyệt: WebSocket luôn 2 chiều — không phải giới hạn HTML tĩnh.";
+      lastInEl.appendChild(hint);
+    }
+
+    if (t === "connected") {
+      statusEl.textContent = msg.hint || "Connected.";
+      timelineStep("ok", "Kết nối", msg.hint || "Đã kết nối WebSocket.");
+      return;
+    }
+
+    if (t === "pong" || t === "schema") return;
+
+    if (t === "queue_task") {
+      var it = msg.item || {};
+      var body =
+        "id=" +
+        (it.id || "?") +
+        "\nsource=" +
+        (it.source || "?") +
+        "\npriority=" +
+        (it.priority || "?") +
+        "\nneeds_user=" +
+        String(it.needs_user) +
+        "\n\n" +
+        (it.action || "");
+      append("meta", "[queue → bạn] " + String(it.action || "").slice(0, 280));
+      timelineStep("tool", "Hàng đợi → tab này (notify_session_id)", body);
+      log.scrollTop = log.scrollHeight;
+      agentTimeline.scrollTop = agentTimeline.scrollHeight;
+      return;
+    }
+
+    if (t === "stream_start") {
+      setRunBusy(true);
+      timelineTextEl = null;
+      assistantEl = append("assistant", "");
+      var startLine =
+        "run_id=" +
+        (msg.run_id || "?") +
+        " · model=" +
+        (msg.model || "?");
+      timelineTextEl = timelineStep("", "Bắt đầu stream", startLine + "\n\n");
+      return;
+    }
+
+    if (t === "text_delta") {
+      if (!assistantEl) assistantEl = append("assistant", "");
+      assistantEl.textContent += msg.text || "";
+      if (!timelineTextEl) timelineTextEl = timelineStep("", "Model — luồng text", "");
+      timelineTextEl.textContent += msg.text || "";
+      log.scrollTop = log.scrollHeight;
+      agentTimeline.scrollTop = agentTimeline.scrollHeight;
+      return;
+    }
+
+    if (t === "thinking") {
+      append("meta", "[thinking] " + (msg.text || ""));
+      timelineStep("", "Suy nghĩ (thinking)", msg.text || "");
+      return;
+    }
+
+    if (t === "tool_use") {
+      append("tool", "run: " + (msg.command || ""));
+      timelineStep(
+        "tool",
+        "Gọi công cụ (lượt " + (msg.turn != null ? msg.turn : "?") + ")",
+        (msg.tool_id ? "id=" + msg.tool_id + "\n" : "") + (msg.command || "")
+      );
+      return;
+    }
+
+    if (t === "tool_result") {
+      var out = (msg.output || "").slice(0, 4000);
+      if ((msg.output || "").length > 4000) out += "\n… (truncated)";
+      append("tool", "exit " + msg.exit_code + " · " + Math.round(msg.elapsed_ms || 0) + "ms\n" + out);
+      timelineStep(
+        "tool",
+        "Kết quả công cụ",
+        "exit " +
+          msg.exit_code +
+          " · " +
+          Math.round(msg.elapsed_ms || 0) +
+          "ms\n" +
+          (msg.command ? "cmd: " + msg.command + "\n" : "") +
+          out
+      );
+      return;
+    }
+
+    if (t === "usage_delta") {
+      timelineStep(
+        "",
+        "Token (usage)",
+        "lượt " +
+          (msg.turn != null ? msg.turn : "?") +
+          " · in=" +
+          (msg.in != null ? msg.in : "?") +
+          " · out=" +
+          (msg.out != null ? msg.out : "?")
+      );
+      return;
+    }
+
+    if (t === "stream_end") {
+      setRunBusy(false);
+      if (assistantEl && !assistantEl.textContent.trim()) {
+        assistantEl.textContent = "(no text reply)";
+      }
+      assistantEl = null;
+      timelineTextEl = null;
+      var metaLine =
+        "stop=" +
+        (msg.stop_reason || "?") +
+        " · tools=" +
+        (msg.tool_calls ?? "?") +
+        " · " +
+        (msg.elapsed_ms ?? "?") +
+        "ms · cost $" +
+        (msg.cost ?? "?") +
+        " · tokens in/out " +
+        (msg.in_tokens ?? "?") +
+        "/" +
+        (msg.out_tokens ?? "?");
+      append("meta", metaLine);
+      timelineStep("ok", "Kết thúc stream", metaLine);
+      return;
+    }
+
+    if (t === "busy") {
+      setRunBusy(false);
+      timelineTextEl = null;
+      append("error", msg.message || "busy");
+      timelineStep("err", "Máy chủ bận", msg.message || "busy");
+      return;
+    }
+
+    if (t === "cancelled") {
+      setRunBusy(false);
+      append("meta", "— cancelled —");
+      assistantEl = null;
+      timelineTextEl = null;
+      timelineStep("", "Đã hủy", "— cancelled —");
+      return;
+    }
+
+    if (t === "error") {
+      setRunBusy(false);
+      var line = msg.message || "error";
+      if (msg.detail) line += " (" + msg.detail + ")";
+      append("error", line);
+      assistantEl = null;
+      timelineTextEl = null;
+      timelineStep("err", "Lỗi", line);
+      return;
+    }
+
+    append("meta", JSON.stringify(msg).slice(0, 300));
+    timelineStep("err", "Sự kiện không rõ", JSON.stringify(msg).slice(0, 500));
+  }
+
+  async function sendMessage() {
+    const text = input.value.trim();
+    if (!text) return;
+    if (location.protocol === "file:") return;
+    if (isOutbound || runInFlight) return;
+
+    isOutbound = true;
+    input.value = "";
+
+    try {
+      await connectWebSocket();
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        append("error", "WebSocket not open. Click Reconnect.");
+        input.value = text;
+        return;
+      }
+      ws.send(JSON.stringify({ type: "run", content: text }));
+      append("user", text);
+      timelineStep("", "Bạn (prompt)", text);
+      setRunBusy(true);
+    } catch (e) {
+      append("error", "WebSocket: " + e.message);
+      input.value = text;
+      setRunBusy(false);
+    } finally {
+      isOutbound = false;
+    }
+  }
+
+  document.getElementById("reconnect").addEventListener("click", function () {
+    closeSocket();
+    connectWebSocket().catch(function (e) {
+      append("error", "Reconnect: " + e.message);
+    });
+  });
+
+  sendBtn.addEventListener("click", sendMessage);
+  input.addEventListener("keydown", function (e) {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  cancelBtn.addEventListener("click", function () {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({ type: "cancel" }));
+      } catch (_) {}
+    }
+  });
+
+  document.getElementById("clear").addEventListener("click", async function () {
+    var session_id = sessionEl.value.trim();
+    if (!session_id) return;
+    try {
+      var r = await fetch("/sessions/" + encodeURIComponent(session_id) + "/clear", {
+        method: "POST",
+      });
+      if (r.ok) {
+        append("meta", "— server history cleared (WS session unchanged) —");
+      } else {
+        append("error", "Clear failed: " + (await r.text()));
+      }
+    } catch (e) {
+      append("error", String(e));
+    }
+  });
+
+  document.getElementById("newSession").addEventListener("click", function () {
+    closeSocket();
+    sessionEl.value = defaultSession();
+    append("meta", "— new session: " + sessionEl.value + " — connect on Send —");
+    connectWebSocket().catch(function () {});
+  });
+
+  async function refreshModel() {
+    if (location.protocol === "file:") return;
+    try {
+      var r = await fetch("/health");
+      var j = await r.json();
+      if (j.model) modelHint.textContent = "Model: " + j.model;
+    } catch (_) {}
+  }
+
+  document.getElementById("timelineClear").addEventListener("click", function () {
+    agentTimeline.textContent = "";
+    timelineTextEl = null;
+  });
+  document.getElementById("hbRefreshWorkflow").addEventListener("click", function () {
+    refreshHeartbeatWorkflow();
+  });
+
+  document.getElementById("hbRun").addEventListener("click", async function () {
+    const out = document.getElementById("hbOut");
+    const noLlm = document.getElementById("hbNoLlm").checked;
+    const planOnly = document.getElementById("hbPlanOnly").checked;
+    const mode = document.getElementById("hbMode").value.trim() || "on-demand";
+    out.textContent = "Đang chạy…";
+    try {
+      const r = await fetch("/heartbeat/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ no_llm: noLlm, plan_only: planOnly, mode: mode }),
+      });
+      const j = await r.json().catch(function () { return {}; });
+      if (!r.ok) {
+        out.textContent = "HTTP " + r.status + "\n" + (j.detail || JSON.stringify(j));
+        return;
+      }
+      out.textContent =
+        "exit_code: " +
+        j.exit_code +
+        "\n\n--- stdout ---\n" +
+        (j.stdout || "") +
+        "\n\n--- stderr ---\n" +
+        (j.stderr || "");
+      refreshHeartbeatWorkflow();
+    } catch (e) {
+      out.textContent = String(e);
+    }
+  });
+
+  append(
+    "meta",
+    "WebSocket /ws/{session} · POST /heartbeat/test · GET /heartbeat/workflow · GET /queue/stats · /docs"
+  );
+  refreshModel();
+  refreshHeartbeatWorkflow();
+  connectWebSocket().catch(function (e) {
+    setWsPill(false, "WS off");
+    statusEl.textContent = "Could not connect — is the server running? (uv run server.py)";
+  });
+})();
+  </script>
+</body>
+</html>
