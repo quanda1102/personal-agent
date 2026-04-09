@@ -11,6 +11,8 @@ OpenAI-specific things handled here (never leak to loop.py):
   Tool schema:
     OpenAI wraps tools as {"type": "function", "function": {...}}
     with "parameters" (not "input_schema" like Claude).
+    When loop passes dynamic tool schemas from ToolRegistry, this provider
+    translates them into OpenAI wire format automatically.
 
   Tool result format:
     OpenAI expects a separate message per tool result:
@@ -76,7 +78,7 @@ class OpenAIProvider(LLMProvider):
 
     Args:
         model:      OpenAI model string. Defaults to OPENCLAWD_MODEL env var
-                    or "gpt-4o".
+                    or "gpt-5.4-mini".
         api_key:    OpenAI API key. Defaults to OPENAI_API_KEY env var.
         base_url:   Override API base URL. Useful for Azure or local servers.
         max_tokens: Max output tokens per turn.
@@ -112,21 +114,10 @@ class OpenAIProvider(LLMProvider):
 
     def tool_schema(self) -> list[dict]:
         """
-        OpenAI wraps tools as:
-          {"type": "function", "function": {"name": ..., "description": ..., "parameters": ...}}
-
-        Claude uses "input_schema"; OpenAI uses "parameters". Same JSON Schema inside.
+        Default tool schema — single "run" tool in OpenAI wire format.
+        Used as fallback when stream() receives tools=None.
         """
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name":        RUN_TOOL["name"],
-                    "description": RUN_TOOL["description"],
-                    "parameters":  RUN_TOOL["parameters"],
-                },
-            }
-        ]
+        return _to_openai_tools([RUN_TOOL])
 
     # ── Tool result format (OpenAI format) ───────────────────────────────────
 
@@ -144,13 +135,6 @@ class OpenAIProvider(LLMProvider):
 
         For vision results (image bytes), we use a multipart content list
         with the text output plus an image_url block (data-URI format).
-
-        NOTE: The loop batches all tool results into one user message via:
-            messages.append({"role": "user", "content": [result1, result2, ...]})
-        That works for Claude. For OpenAI, tool results must be separate
-        top-level messages with role "tool". The loop's message structure
-        is the same dict — the provider's messages param injection in stream()
-        handles the OpenAI-specific flattening.
         """
         if image:
             mime = _sniff_mime(image)
@@ -176,39 +160,36 @@ class OpenAIProvider(LLMProvider):
         system:    str,
         on_event:  Callable[[Event], None],
         turn_num:  int = 1,
+        tools:     list[dict] | None = None,
     ) -> TurnUsage:
         """
         Stream a single OpenAI turn.
 
-        Injects the system prompt as the first message if not already present.
-        Flattens tool results from Claude-style user message batches into
-        individual OpenAI-style tool messages before sending.
-
-        Accumulates:
-          - text deltas              → TextDelta events
-          - tool call argument chunks → assembled into ToolUse events
-          - usage from final chunk   → TurnUsage
-
-        Returns TurnUsage. stop_reason stored in _last_stop_reason.
+        Args:
+            tools:  Dynamic tool schemas from ToolRegistry (provider-agnostic format).
+                    Converted to OpenAI wire format here.
+                    If None, falls back to self.tool_schema().
         """
         usage = TurnUsage(turn=turn_num, model=self._model)
         self._last_stop_reason = "end_turn"
 
         # ── Prepare messages ──────────────────────────────────────────────────
-        # 1. Inject system prompt as first message (idempotent)
-        # 2. Flatten any batched tool result user messages into individual
-        #    {"role": "tool", ...} messages OpenAI expects
         prepared = _prepare_messages(messages, system)
 
+        # ── Resolve tool definitions ──────────────────────────────────────────
+        if tools is not None:
+            openai_tools = _to_openai_tools(tools)
+        else:
+            openai_tools = self.tool_schema()
+
         # ── Tool call accumulator ─────────────────────────────────────────────
-        # index → {id, name, args_buf}
         _tool_calls: dict[int, dict] = {}
 
         stream = await self._client.chat.completions.create(
             model=self._model,
             **_max_tokens_param(self._model, self._max_tokens),
             messages=prepared,
-            tools=self.tool_schema(),
+            tools=openai_tools,
             tool_choice="auto",
             stream=True,
             stream_options={"include_usage": True},
@@ -257,10 +238,11 @@ class OpenAIProvider(LLMProvider):
             except json.JSONDecodeError:
                 tool_input = {}
 
-            command = tool_input.get("command", "")
             on_event(ToolUse(
                 tool_id=tc["id"],
-                command=command,
+                name=tc["name"],
+                input=tool_input,
+                command=tool_input.get("command", ""),  # backward-compat
                 turn=turn_num,
             ))
 
@@ -281,13 +263,45 @@ class OpenAIProvider(LLMProvider):
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+def _to_openai_tools(tools: list[dict]) -> list[dict]:
+    """
+    Convert provider-agnostic tool schemas to OpenAI wire format.
+
+    Input (from ToolRegistry):
+      {"name": "run", "description": "...", "input_schema": {"type": "object", ...}}
+
+    Output (OpenAI wire format):
+      {"type": "function", "function": {"name": "run", "description": "...", "parameters": {...}}}
+
+    Handles both ToolRegistry format (input_schema) and legacy format (parameters).
+    Already-wrapped tools (with "type": "function") pass through unchanged.
+    """
+    result = []
+    for tool in tools:
+        # Already in OpenAI format — pass through
+        if tool.get("type") == "function":
+            result.append(tool)
+            continue
+
+        # Convert from provider-agnostic format
+        params = tool.get("input_schema") or tool.get("parameters", {})
+        result.append({
+            "type": "function",
+            "function": {
+                "name":        tool["name"],
+                "description": tool.get("description", ""),
+                "parameters":  params,
+            },
+        })
+    return result
+
+
 def _max_tokens_param(model: str, value: int) -> dict:
     """
     Return the correct token-limit parameter for the given model.
 
     Older models  (gpt-4o, gpt-4-*, …)  use  max_tokens.
     Newer models  (gpt-5*, o1, o3, o4-*) use  max_completion_tokens.
-    Passing the wrong one causes a 400 'unsupported_parameter' error.
     """
     m = model.lower()
     if m.startswith(("o1", "o3", "o4", "gpt-5")):
@@ -299,39 +313,10 @@ def _prepare_messages(messages: list[dict], system: str) -> list[dict]:
     """
     Prepare messages for the OpenAI / Ollama API.
 
-    The loop stores messages in a provider-neutral format.  This function
-    converts them to the exact wire format OpenAI (and Ollama) expects.
-
-    Two conversions are needed:
-
-    1.  Assistant tool-use blocks  (Claude format → OpenAI format)
-
-        The loop appends the assistant turn as:
-          {"role": "assistant", "content": [
-              {"type": "tool_use", "id": "...", "name": "run",
-               "input": {"command": "..."}},
-          ]}
-
-        OpenAI / Ollama requires:
-          {"role": "assistant", "content": null, "tool_calls": [
-              {"id": "...", "type": "function",
-               "function": {"name": "run",
-                            "arguments": "{\"command\": \"...\"}"}},
-          ]}
-
-        Without this conversion Ollama returns 400 "invalid message format"
-        on the second LLM call (the one that receives the tool result).
-
-    2.  Batched tool results  (loop format → individual top-level messages)
-
-        The loop appends all tool results in one user message:
-      {"role": "user", "content": [
-              {"role": "tool", "tool_call_id": "...", "content": "..."},
-      ]}
-
-        OpenAI requires each as a separate top-level message with role "tool".
-
-    3.  System prompt injection  (idempotent)
+    Two conversions:
+    1. Assistant tool-use blocks (Claude format → OpenAI format)
+    2. Batched tool results (loop format → individual top-level messages)
+    3. System prompt injection (idempotent)
     """
     result: list[dict] = []
 

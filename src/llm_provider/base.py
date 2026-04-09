@@ -13,23 +13,22 @@ Adding a new provider:
   4. Register in core/providers/__init__.py
   That's it. Loop is untouched.
 
-Tool definition:
-  We expose exactly ONE tool to the LLM: run(command).
-  Providers are responsible for translating this into their
-  provider-specific tool schema format. The loop always uses
-  the same logical tool — providers handle the wire format.
+Tool definitions:
+  Default: a single "run" tool for shell commands.
+  Multi-agent: loop passes dynamic tool schemas from ToolRegistry.
+  Provider translates whatever it receives into wire format.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Callable
+from typing import Callable
 
 from ..agent.events import Event
 from ..agent.usage import TurnUsage
 
 
-# ── The single tool definition (provider-agnostic) ────────────────────────────
+# ── Default tool definition (used when no tools passed to stream) ─────────────
 
 RUN_TOOL = {
     "name": "run",
@@ -71,7 +70,7 @@ class LLMProvider(ABC):
     Abstract base for all LLM provider adapters.
 
     Responsibilities:
-      - Accept messages + system prompt
+      - Accept messages + system prompt + tool definitions
       - Stream tokens and tool calls from the provider API
       - Emit normalized Event objects via on_event()
       - Return TurnUsage with provider-agnostic token counts
@@ -90,6 +89,7 @@ class LLMProvider(ABC):
         system:    str,
         on_event:  Callable[[Event], None],
         turn_num:  int = 1,
+        tools:     list[dict] | None = None,
     ) -> TurnUsage:
         """
         Stream a single LLM turn.
@@ -100,6 +100,8 @@ class LLMProvider(ABC):
             system:    System prompt string (workspace + skills combined).
             on_event:  Callback — call this for every event as it happens.
             turn_num:  Which turn in the run (for UsageDelta labeling).
+            tools:     Tool definitions from ToolRegistry. If None, provider
+                       falls back to self.tool_schema() (backward-compat).
 
         Returns:
             TurnUsage with token counts for this single API call.
@@ -131,8 +133,8 @@ class LLMProvider(ABC):
 
     def tool_schema(self) -> list[dict]:
         """
-        Return the provider-specific tool definition list.
-        Default: wraps RUN_TOOL in the provider's expected schema format.
-        Override if your provider needs a different structure.
+        Return the default tool definition list.
+        Used as fallback when stream() receives tools=None.
+        Override if your provider needs a different default structure.
         """
         return [RUN_TOOL]

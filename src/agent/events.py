@@ -26,79 +26,75 @@ from typing import Any
 
 
 class EventType(Enum):
-    STREAM_START  = auto()
-    TEXT_DELTA    = auto()
-    TOOL_USE      = auto()
-    TOOL_RESULT   = auto()
-    USAGE_DELTA   = auto()
-    THINKING      = auto()   # extended thinking (Claude-specific)
-    STREAM_END    = auto()
-    STREAM_ERROR  = auto()
+    STREAM_START     = auto()
+    TEXT_DELTA       = auto()
+    TOOL_USE         = auto()
+    TOOL_RESULT      = auto()
+    USAGE_DELTA      = auto()
+    THINKING         = auto()   # extended thinking (Claude-specific)
+    STREAM_END       = auto()
+    STREAM_ERROR     = auto()
+    TURN_START       = auto()
+    TURN_END         = auto()
+    RETRY_ATTEMPT    = auto()
+    RECOVERY_APPLIED = auto()
 
 
 @dataclass
-class StreamStart:
+class Event:
+    """Base class for all events."""
+    pass
+
+@dataclass
+class StreamStart(Event):
     type: EventType = field(default=EventType.STREAM_START, init=False)
     run_id:     str = ""
     session_id: str = ""
     model:      str = ""
 
-
 @dataclass
-class TextDelta:
-    """A chunk of streamed text from the LLM."""
+class TextDelta(Event):
     type: EventType = field(default=EventType.TEXT_DELTA, init=False)
     text: str = ""
 
-
 @dataclass
-class Thinking:
-    """Extended thinking block (Claude extended thinking)."""
+class Thinking(Event):
     type: EventType = field(default=EventType.THINKING, init=False)
     text: str = ""
 
-
 @dataclass
-class ToolUse:
-    """LLM is calling run(command=...). Emitted before execution."""
+class ToolUse(Event):
     type:       EventType = field(default=EventType.TOOL_USE, init=False)
-    tool_id:    str = ""       
-    command:    str = ""       
-    turn:       int = 0       
-
+    tool_id:    str = ""
+    name: str = "run"
+    command:    str = ""
+    turn:       int = 0
+    input: dict = field(default_factory=dict)
 
 @dataclass
-class ToolResult:
-    """Result of executing the command. Emitted after execution."""
+class ToolResult(Event):
     type:       EventType = field(default=EventType.TOOL_RESULT, init=False)
     tool_id:    str = ""
     command:    str = ""
-    output:     str = ""       # stdout text
+    output:     str = ""
     exit_code:  int = 0
     elapsed_ms: float = 0.0
-    has_image:  bool = False   # True if result carries vision bytes
-
+    has_image:  bool = False
 
 @dataclass
-class UsageDelta:
-    """
-    Token usage after a single LLM API call (one turn).
-    Accumulated into RunUsage across the full run.
-    """
+class UsageDelta(Event):
     type:               EventType = field(default=EventType.USAGE_DELTA, init=False)
     input_tokens:       int = 0
     output_tokens:      int = 0
-    cache_write_tokens: int = 0   # Claude prompt cache write
-    cache_read_tokens:  int = 0   # Claude prompt cache read hit
+    cache_write_tokens: int = 0
+    cache_read_tokens:  int = 0
     turn:               int = 0
 
-
 @dataclass
-class StreamEnd:
-    """Run completed successfully."""
+class StreamEnd(Event):
     type:        EventType = field(default=EventType.STREAM_END, init=False)
     run_id:      str = ""
-    stop_reason: str = ""        # "end_turn" | "tool_ceiling" | "max_tokens"
+    stop_reason: str = ""
     total_input_tokens:       int = 0
     total_output_tokens:      int = 0
     total_cache_write_tokens: int = 0
@@ -107,16 +103,42 @@ class StreamEnd:
     estimated_cost_usd:       float = 0.0
     elapsed_ms:               float = 0.0
 
-
 @dataclass
-class StreamError:
-    """Run failed."""
+class StreamError(Event):
     type:    EventType = field(default=EventType.STREAM_ERROR, init=False)
     run_id:  str = ""
+    turn_num: int = 0
     message: str = ""
     detail:  Any = None
 
-Event = (
-    StreamStart | TextDelta | Thinking | ToolUse | ToolResult
-    | UsageDelta | StreamEnd | StreamError
-)
+@dataclass
+class TurnStart(Event):
+    type:     EventType = field(default=EventType.TURN_START, init=False)
+    run_id:   str = ""
+    turn_num: int = 0
+
+@dataclass
+class TurnEnd(Event):
+    type:            EventType = field(default=EventType.TURN_END, init=False)
+    run_id:          str = ""
+    turn_num:        int = 0
+    input_tokens:    int = 0
+    output_tokens:   int = 0
+    tool_call_count: int = 0
+
+@dataclass
+class RetryAttempt(Event):
+    type:       EventType = field(default=EventType.RETRY_ATTEMPT, init=False)
+    run_id:     str = ""
+    turn_num:   int = 0
+    attempt:    int = 0
+    reason:     str = ""
+    error_type: str = ""
+
+@dataclass
+class RecoveryApplied(Event):
+    type:       EventType = field(default=EventType.RECOVERY_APPLIED, init=False)
+    run_id:     str = ""
+    turn_num:   int = 0
+    reason:     str = ""
+    error_type: str = ""

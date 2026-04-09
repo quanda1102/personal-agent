@@ -19,6 +19,7 @@ What we override:
 
   stream:
     - skip tools param entirely if supports_tools=False
+    - accepts dynamic tool schemas from ToolRegistry
     - stream_options usage support varies by Ollama version; fall back to 0
     - tool_choice="auto" omitted when tools disabled
 
@@ -54,7 +55,7 @@ from typing import Callable
 
 from ..agent.events import Event, TextDelta, ToolUse, UsageDelta
 from ..agent.usage import TurnUsage
-from .openai import OpenAIProvider, _prepare_messages, _STOP_MAP
+from .openai import OpenAIProvider, _prepare_messages, _to_openai_tools, _STOP_MAP
 
 
 class OllamaProvider(OpenAIProvider):
@@ -123,9 +124,16 @@ class OllamaProvider(OpenAIProvider):
         system:    str,
         on_event:  Callable[[Event], None],
         turn_num:  int = 1,
+        tools:     list[dict] | None = None,
     ) -> TurnUsage:
         """
         Stream a single Ollama turn.
+
+        Args:
+            tools:  Dynamic tool schemas from ToolRegistry.
+                    Converted to OpenAI wire format via _to_openai_tools().
+                    If None, falls back to self.tool_schema().
+                    Ignored entirely if supports_tools=False.
 
         Differences from OpenAIProvider.stream():
           1. If supports_tools=False, omits tools and tool_choice params
@@ -144,6 +152,15 @@ class OllamaProvider(OpenAIProvider):
         prepared   = _prepare_messages(messages, system)
         _tool_calls: dict[int, dict] = {}
 
+        # ── Resolve tool definitions ──────────────────────────────────────────
+        if self._supports_tools:
+            if tools is not None:
+                openai_tools = _to_openai_tools(tools)
+            else:
+                openai_tools = self.tool_schema()
+        else:
+            openai_tools = None
+
         # Build create() kwargs — conditionally include tools
         create_kwargs: dict = {
             "model":          self._model,
@@ -152,8 +169,8 @@ class OllamaProvider(OpenAIProvider):
             "stream":         True,
             "stream_options": {"include_usage": True},
         }
-        if self._supports_tools:
-            create_kwargs["tools"]       = self.tool_schema()
+        if openai_tools is not None:
+            create_kwargs["tools"]       = openai_tools
             create_kwargs["tool_choice"] = "auto"
 
         stream = await self._client.chat.completions.create(**create_kwargs)
@@ -210,7 +227,9 @@ class OllamaProvider(OpenAIProvider):
 
             on_event(ToolUse(
                 tool_id=tc["id"],
-                command=tool_input.get("command", ""),
+                name=tc["name"],
+                input=tool_input,
+                command=tool_input.get("command", ""),  # backward-compat
                 turn=turn_num,
             ))
 

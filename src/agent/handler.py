@@ -22,7 +22,7 @@ from abc import ABC, abstractmethod
 from .events import (
     Event, EventType,
     StreamStart, TextDelta, Thinking, ToolUse, ToolResult,
-    UsageDelta, StreamEnd, StreamError,
+    UsageDelta, StreamEnd, StreamError, TurnStart, TurnEnd, RetryAttempt, RecoveryApplied,
 )
 
 
@@ -129,6 +129,25 @@ class CLIStreamHandler(StreamHandler):
             if e.detail:
                 print(f"  detail: {e.detail}", file=sys.stderr)
 
+        elif t == EventType.TURN_START:
+            e: TurnStart = event
+            print(f"\n[turn {e.turn_num}]", file=sys.stderr)
+
+        elif t == EventType.TURN_END:
+            e: TurnEnd = event
+            print(
+                f"[turn {e.turn_num} done | "
+                f"in={e.input_tokens} out={e.output_tokens} tools={e.tool_call_count}]",
+                file=sys.stderr
+            )
+
+        elif t == EventType.RETRY_ATTEMPT:
+            e: RetryAttempt = event
+            print(f"\n[retry attempt={e.attempt}] {e.error_type}: {e.reason}", file=sys.stderr)
+
+        elif t == EventType.RECOVERY_APPLIED:
+            e: RecoveryApplied = event
+            print(f"\n[recovery] {e.error_type}: {e.reason}", file=sys.stderr)
 
 # ── Silent handler ─────────────────────────────────────────────────────────────
 

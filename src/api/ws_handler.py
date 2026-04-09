@@ -111,6 +111,41 @@ def event_to_dict(event: Event) -> dict:
             "message": event.message,
             "detail":  str(event.detail) if event.detail else None,
         }
+    if t == EventType.TURN_START:
+        return {
+            "type": "turn_start",
+            "run_id": event.run_id,
+            "turn_num": event.turn_num,
+        }
+
+    if t == EventType.TURN_END:
+        return {
+            "type": "turn_end",
+            "run_id": event.run_id,
+            "turn_num": event.turn_num,
+            "input_tokens": event.input_tokens,
+            "output_tokens": event.output_tokens,
+            "tool_call_count": event.tool_call_count,
+        }
+
+    if t == EventType.RETRY_ATTEMPT:
+        return {
+            "type": "retry_attempt",
+            "run_id": event.run_id,
+            "turn_num": event.turn_num,
+            "attempt": event.attempt,
+            "reason": event.reason,
+            "error_type": event.error_type,
+        }
+
+    if t == EventType.RECOVERY_APPLIED:
+        return {
+            "type": "recovery_applied",
+            "run_id": event.run_id,
+            "turn_num": event.turn_num,
+            "reason": event.reason,
+            "error_type": event.error_type,
+        }
 
     return {"type": "unknown"}
 
