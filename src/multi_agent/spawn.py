@@ -134,8 +134,11 @@ async def spawn_sub_agent(
         return err("spawn: runner not initialized. Call set_runner() at startup.")
 
     from ..agent.loop import RunContext
+    from ..agent.trace import get_trace_store
     from .agent_schema import load_agent
     from .agent_executor import AgentScopedExecutor
+    from ..agent.executor import RoleScopedExecutor
+    from ..agent.tools import make_restricted_registry
 
     agent_id = f"{role}-{uuid.uuid4().hex[:8]}"
 
@@ -160,15 +163,29 @@ async def spawn_sub_agent(
     #     → RoleScopedExecutor       ← sets execution role (from parent)
     #       → LocalExecutor          ← runs command via router.py
     #
+    base_executor = _parent_context.executor
+    if agent_def and agent_def.execution_role:
+        if isinstance(base_executor, RoleScopedExecutor):
+            base_executor = base_executor.inner
+        base_executor = RoleScopedExecutor(agent_def.execution_role, inner=base_executor)
+
     if agent_def and (agent_def.allowed_commands or agent_def.blocked_commands):
         scoped_executor = AgentScopedExecutor(
-            inner=_parent_context.executor,
+            inner=base_executor,
             allowed_commands=agent_def.allowed_commands,
             blocked_commands=agent_def.blocked_commands,
             agent_id=agent_id,
         )
     else:
-        scoped_executor = _parent_context.executor
+        scoped_executor = base_executor
+
+    if agent_def and (agent_def.allowed_commands or agent_def.blocked_commands):
+        child_registry = make_restricted_registry(
+            allowed_commands=agent_def.allowed_commands,
+            blocked_commands=agent_def.blocked_commands,
+        )
+    else:
+        child_registry = _parent_context.tool_registry
 
     # ── 4. Build child RunContext ──────────────────────────────────────
     child_context = RunContext(
@@ -176,9 +193,10 @@ async def spawn_sub_agent(
         system_prompt    = resolved_prompt,
         agent_id         = agent_id,
         agent_role       = role,
+        parent_run_id    = _parent_context.run_id,
         session_id       = _parent_context.session_id,
         messages         = [],                             # fresh history
-        tool_registry    = _parent_context.tool_registry,  # same tools
+        tool_registry    = child_registry,
         executor         = scoped_executor,                # filtered executor
         handler          = _parent_context.handler,        # same event stream
         max_tool_calls   = resolved_max_tools,
@@ -199,22 +217,34 @@ async def spawn_sub_agent(
 
     # ── 6. Extract final response ─────────────────────────────────────
     final_response = _extract_final_response(child_context.messages)
+    stop_reason = child_context.last_stop_reason or "unknown"
+    local_usage = usage
+    subtree_usage = get_trace_store().subtree_usage(child_context.run_id)
+    status, next_action, summary = _classify_spawn_outcome(
+        role=role,
+        stop_reason=stop_reason,
+        final_response=final_response,
+    )
 
-    if not final_response:
-        return Result(
-            stdout=f"[spawn:{agent_id}] (sub-agent produced no text response)\n{usage}",
-            exit=1,
-            elapsed_ms=t.elapsed_ms,
-        )
+    stdout = _format_spawn_result(
+        agent_id=agent_id,
+        role=role,
+        status=status,
+        stop_reason=stop_reason,
+        next_action=next_action,
+        tools_used=local_usage.total_tool_calls,
+        total_tokens=local_usage.total_input_tokens + local_usage.total_output_tokens,
+        subtree_tool_calls=subtree_usage.tool_calls,
+        subtree_total_tokens=subtree_usage.total_tokens,
+        subtree_cost_usd=subtree_usage.estimated_cost_usd,
+        elapsed_ms=t.elapsed_ms,
+        summary=summary,
+        result=final_response,
+    )
 
     return Result(
-        stdout=(
-            f"[spawn:{agent_id} | {usage.total_tool_calls} tools | "
-            f"{usage.total_input_tokens + usage.total_output_tokens} tokens | "
-            f"{t.elapsed_ms:.0f}ms]\n\n"
-            f"{final_response}"
-        ),
-        exit=0,
+        stdout=stdout,
+        exit=0 if status == "completed" else 1,
         elapsed_ms=t.elapsed_ms,
     )
 
@@ -292,11 +322,19 @@ def _format_command_constraints(agent_def: "AgentDef") -> str:
     lines: list[str] = []
 
     if agent_def.allowed_commands:
-        lines.append("Available commands (you can ONLY use these):")
+        lines.append("Allowed CLI commands inside restricted execution:")
         lines.append("  " + ", ".join(agent_def.allowed_commands))
+        lines.append('Use: act(op="run_allowed_command", command="...")')
+        if "note" in {cmd.lower() for cmd in agent_def.allowed_commands}:
+            lines.append("Note command semantics:")
+            lines.append("  - Use `note read` to inspect frontmatter + body before editing.")
+            lines.append("  - Use `note tag` for add/remove tag changes.")
+            lines.append("  - Use `note write` for frontmatter metadata updates such as title or tags replacement.")
+            lines.append("  - Use `note patch` only for note body edits, not YAML frontmatter.")
+            lines.append("  - `note write --section=...` targets a Markdown heading in the body.")
 
     if agent_def.blocked_commands:
-        lines.append("Blocked commands (these will be rejected):")
+        lines.append("Blocked CLI commands (these will be rejected):")
         lines.append("  " + ", ".join(agent_def.blocked_commands))
 
     if not lines:
@@ -319,6 +357,91 @@ def _extract_final_response(messages: list[dict]) -> str:
         if isinstance(content, str) and content.strip():
             return content.strip()
     return ""
+
+
+def _classify_spawn_outcome(
+    *,
+    role: str,
+    stop_reason: str,
+    final_response: str,
+) -> tuple[str, str, list[str]]:
+    summary: list[str] = []
+
+    if final_response and stop_reason == "end_turn":
+        summary.append("Sub-agent completed its delegated task and produced a usable final response.")
+        return "completed", "return_to_user", summary
+
+    if final_response:
+        summary.append(f"Sub-agent produced a response but did not finish cleanly (stop_reason={stop_reason}).")
+        summary.append("Parent should use the child output, then recover only the missing part.")
+        return "partial", "continue_locally", summary
+
+    if stop_reason == "tool_ceiling":
+        summary.append("Sub-agent hit its tool ceiling before producing a final answer.")
+        summary.append("Parent should inspect why, then either narrow the task or choose a better specialist.")
+        if role != "obsidian":
+            return "failed", "respawn_better_specialist", summary
+        return "failed", "continue_locally", summary
+
+    if stop_reason == "max_turns":
+        summary.append("Sub-agent ran out of turns before finishing.")
+        summary.append("Parent should narrow the task or continue locally.")
+        return "failed", "continue_locally", summary
+
+    if stop_reason == "error":
+        summary.append("Sub-agent failed with an execution error.")
+        summary.append("Parent should recover intelligently instead of repeating the same attempt blindly.")
+        return "failed", "continue_locally", summary
+
+    summary.append("Sub-agent did not produce a final response.")
+    summary.append("Parent should inspect the child transcript and recover intelligently.")
+    return "failed", "continue_locally", summary
+
+
+def _format_spawn_result(
+    *,
+    agent_id: str,
+    role: str,
+    status: str,
+    stop_reason: str,
+    next_action: str,
+    tools_used: int,
+    total_tokens: int,
+    subtree_tool_calls: int,
+    subtree_total_tokens: int,
+    subtree_cost_usd: float,
+    elapsed_ms: float,
+    summary: list[str],
+    result: str,
+) -> str:
+    lines = [
+        "[spawn_result]",
+        f"agent_id: {agent_id}",
+        f"role: {role}",
+        f"status: {status}",
+        f"stop_reason: {stop_reason}",
+        f"next_action: {next_action}",
+        f"tools_used: {tools_used}",
+        f"total_tokens: {total_tokens}",
+        f"subtree_tool_calls: {subtree_tool_calls}",
+        f"subtree_total_tokens: {subtree_total_tokens}",
+        f"subtree_cost_usd: {subtree_cost_usd:.6f}",
+        f"elapsed_ms: {elapsed_ms:.0f}",
+        "",
+        "summary:",
+    ]
+    for item in summary:
+        lines.append(f"- {item}")
+
+    if result:
+        lines.extend([
+            "",
+            "result:",
+            result,
+        ])
+
+    lines.append("[/spawn_result]")
+    return "\n".join(lines)
 
 
 # ── CLI dispatch handler ──────────────────────────────────────────────────────

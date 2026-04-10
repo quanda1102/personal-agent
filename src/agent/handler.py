@@ -86,7 +86,7 @@ class CLIStreamHandler(StreamHandler):
             if self._in_text:
                 print()   # newline after streaming text
                 self._in_text = False
-            print(f"\n  → [{e.turn}] run({e.command!r})", file=sys.stderr)
+            print(f"\n  → [{e.turn}] {e.command}", file=sys.stderr)
 
         elif t == EventType.TOOL_RESULT:
             e: ToolResult = event

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from cli_handler.result import Result, ok, Timer
+from ..cli_handler.result import Result, ok, Timer
 from .queue_store import get_queue_store
 
 

@@ -54,6 +54,8 @@ from .events import (
 from .executor import Executor, LocalExecutor
 from .handler import StreamHandler, SilentHandler
 from .tools import ToolRegistry, ToolOutput, make_default_registry
+from .capabilities import summarize_action
+from .trace import get_trace_store
 from ..llm_provider.base import LLMProvider
 from .usage import RunUsage
 
@@ -94,6 +96,7 @@ class RunContext:
 
     # ── Tracing — system-only, never sent to LLM ─────────────────────────────
     run_id:         str              = field(default_factory=lambda: str(uuid.uuid4()))
+    parent_run_id:  str | None       = None
     session_id:     str              = "default"
 
     # ── Conversation state — mutated by runner, carry forward for multi-turn ──
@@ -110,6 +113,7 @@ class RunContext:
 
     # ── Per-run ceiling override ─────────────────────────────────────────────
     max_tool_calls: int | None       = None
+    last_stop_reason: str            = ""
 
     # ── Append turns to {VAULT}/.heartbeat/conversation.jsonl when vault is set
     log_conversation: bool           = True
@@ -183,6 +187,15 @@ class Runner:
 
         def emit(event: Event) -> None:
             context.handler.handle(event)
+
+        get_trace_store().begin_run(
+            run_id=context.run_id,
+            parent_run_id=context.parent_run_id,
+            session_id=context.session_id,
+            agent_id=context.agent_id,
+            agent_role=context.agent_role,
+            model=self.provider.model,
+        )
 
         emit(StreamStart(
             run_id=context.run_id,
@@ -319,6 +332,15 @@ class Runner:
                 continue
 
         except Exception as exc:
+            context.last_stop_reason = "error"
+            get_trace_store().finish_run(
+                run_id=context.run_id,
+                usage=usage,
+                stop_reason="error",
+                status="error",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
             emit(StreamError(
                 run_id=context.run_id,
                 turn_num=turn_num,
@@ -328,6 +350,13 @@ class Runner:
             return usage
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
+        context.last_stop_reason = stop_reason
+        get_trace_store().finish_run(
+            run_id=context.run_id,
+            usage=usage,
+            stop_reason=stop_reason,
+            status="completed" if stop_reason == "end_turn" else "stopped",
+        )
         emit(StreamEnd(
             run_id=context.run_id,
             stop_reason=stop_reason,
@@ -392,11 +421,12 @@ async def _execute_tool(
             )
 
     # ── Heartbeat hook (bash tools only) ──────────────────────────────────
-    if tool_name == "run":
+    if tool_name == "act":
         try:
             from ..heartbeat.tool_hooks import maybe_enqueue_remediation
+            rendered_command = summarize_action(tool_input)
             maybe_enqueue_remediation(
-                command=tool_input.get("command", ""),
+                command=rendered_command,
                 rendered_output=output.output,
                 exit_code=output.exit_code,
             )
@@ -405,7 +435,7 @@ async def _execute_tool(
 
     emit(ToolResult(
         tool_id=tool_event.tool_id,
-        command=tool_input.get("command", tool_name),
+        command=summarize_action(tool_input) if tool_name == "act" else tool_name,
         output=output.output,
         exit_code=output.exit_code,
         elapsed_ms=output.elapsed_ms,

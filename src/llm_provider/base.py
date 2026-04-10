@@ -31,34 +31,36 @@ from ..agent.usage import TurnUsage
 # ── Default tool definition (used when no tools passed to stream) ─────────────
 
 RUN_TOOL = {
-    "name": "run",
+    "name": "act",
     "description": (
-        "Execute a command. Supports Unix-style chaining with |, &&, ||, ;\n\n"
+        "Execute one structured action.\n\n"
         "Examples:\n"
-        "  run(command='cat notes.md')\n"
-        "  run(command='memory search \"breakfast preference\"')\n"
-        "  run(command='memory recent 10 | grep anxiety')\n"
-        "  run(command='memory store user prefers pho && memory count')\n"
-        "  run(command='note ls --all')\n"
-        "  run(command='note read path/to/note.md')\n"
-        "  run(command='queue push --source conversation --action \"summarise today\"')\n"
-        "Note: in chat/voice, note new|write|tag|mv are blocked — use queue push for vault changes.\n"
-        "  run(command='skills show weather')\n"
-        "  run(command='see photo.png')\n\n"
-        "Run 'memory', 'skills', 'note', or 'queue' with no args to see usage."
+        "  act(op='run_command', command='memory search \"breakfast preference\"')\n"
+        "  act(op='read_file', path='README.md')\n"
+        "  act(op='search_files', query='Authorization', root='src')\n"
+        "  act(op='load_skill', name='weather')\n"
+        "  act(op='spawn_agent', role='researcher', task='audit auth flow')\n"
     ),
     "parameters": {
         "type": "object",
         "properties": {
+            "op": {
+                "type": "string",
+                "description": "Which action to execute.",
+            },
             "command": {
                 "type": "string",
-                "description": (
-                    "The command string to execute. "
-                    "Supports | && || ; chaining."
-                ),
-            }
+                "description": "CLI command string for run_command or run_allowed_command.",
+            },
+            "path": {"type": "string"},
+            "content": {"type": "string"},
+            "root": {"type": "string"},
+            "query": {"type": "string"},
+            "name": {"type": "string"},
+            "role": {"type": "string"},
+            "task": {"type": "string"},
         },
-        "required": ["command"],
+        "required": ["op"],
     },
 }
 

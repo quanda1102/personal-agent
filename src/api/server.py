@@ -66,10 +66,12 @@ from ..agent.exec_role import ROLE_CONVERSATION
 from ..agent.executor import RoleScopedExecutor
 from ..agent.loop    import Runner, RunContext
 from ..agent.handler import SilentHandler
+from ..agent.trace import UsageSnapshot, get_trace_store
 from ..heartbeat.queue_store import QueueItem
 from .session import SessionStore, get_session_store
 from .ws_handler import WebSocketHandler
 from .ws_registry import WSSessionRegistry, queue_ws_notify_loop
+from ..multi_agent.spawn import set_runner
 
 
 # ── REST chat models ───────────────────────────────────────────────────────────
@@ -95,6 +97,14 @@ class ChatResponse(BaseModel):
     out_tokens:  int
     cost:        float
     elapsed_ms:  float
+    local_tool_calls: int
+    local_in_tokens: int
+    local_out_tokens: int
+    local_cost: float
+    subtree_tool_calls: int
+    subtree_in_tokens: int
+    subtree_out_tokens: int
+    subtree_cost: float
 
 
 class HeartbeatTestRequest(BaseModel):
@@ -370,7 +380,7 @@ WS_PROTOCOL = {
         "thinking":     {"description": "LLM extended thinking block.", "fields": {"type": "thinking", "text": "str"}},
         "tool_use":     {"description": "Agent is calling a command.", "fields": {"type": "tool_use", "turn": "int", "command": "str"}},
         "tool_result":  {"description": "Command output.", "fields": {"type": "tool_result", "exit_code": "int", "output": "str", "elapsed_ms": "float"}},
-        "stream_end":   {"description": "Run completed.", "fields": {"type": "stream_end", "stop_reason": "str", "in_tokens": "int", "out_tokens": "int", "cost": "float", "elapsed_ms": "float"}},
+        "stream_end":   {"description": "Run completed. Flat fields (`in_tokens`, `out_tokens`, `tool_calls`, `cost`) are the local run only. `subtree_*` fields include nested sub-agent runs.", "fields": {"type": "stream_end", "stop_reason": "str", "in_tokens": "int", "out_tokens": "int", "tool_calls": "int", "cost": "float", "local_in_tokens": "int", "local_out_tokens": "int", "local_tool_calls": "int", "local_cost": "float", "subtree_in_tokens": "int", "subtree_out_tokens": "int", "subtree_tool_calls": "int", "subtree_cost": "float", "elapsed_ms": "float"}},
         "error":        {"description": "Non-fatal error (connection stays open).", "fields": {"type": "error", "message": "str", "detail": "str|null"}},
         "busy":         {"description": "A run is already active on this session.", "fields": {"type": "busy", "message": "str"}},
         "cancelled":    {"description": "Active run was cancelled.", "fields": {"type": "cancelled"}},
@@ -543,22 +553,49 @@ def create_app(runner: Runner, system_prompt: str) -> FastAPI:
         )
 
         try:
+            set_runner(state.runner, ctx)
             usage = await state.runner.run(ctx)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
         end_event  = handler.final_usage()
+        trace = get_trace_store().get_run(ctx.run_id)
+        trace_local = trace.local_usage if trace is not None else UsageSnapshot.from_run_usage(usage)
+        local_usage = UsageSnapshot(
+            input_tokens=trace_local.input_tokens or usage.total_input_tokens,
+            output_tokens=trace_local.output_tokens or usage.total_output_tokens,
+            cache_write_tokens=trace_local.cache_write_tokens or usage.total_cache_write_tokens,
+            cache_read_tokens=trace_local.cache_read_tokens or usage.total_cache_read_tokens,
+            tool_calls=trace_local.tool_calls or usage.total_tool_calls,
+            estimated_cost_usd=trace_local.estimated_cost_usd or usage.estimated_cost_usd,
+        )
+        subtree_usage = get_trace_store().subtree_usage(ctx.run_id)
+        if (
+            subtree_usage.input_tokens == 0
+            and subtree_usage.output_tokens == 0
+            and subtree_usage.tool_calls == 0
+            and subtree_usage.estimated_cost_usd == 0.0
+        ):
+            subtree_usage = UsageSnapshot.from_run_usage(usage)
 
         return ChatResponse(
             text        = handler.text_output(),
             session_id  = body.session_id,
-            tool_calls  = usage.total_tool_calls,
+            tool_calls  = local_usage.tool_calls,
             stop_reason = end_event.stop_reason if end_event else "unknown",
-            in_tokens   = usage.total_input_tokens,
-            out_tokens  = usage.total_output_tokens,
-            cost        = usage.estimated_cost_usd,
+            in_tokens   = local_usage.input_tokens,
+            out_tokens  = local_usage.output_tokens,
+            cost        = round(local_usage.estimated_cost_usd, 6),
             elapsed_ms  = round(elapsed_ms, 1),
+            local_tool_calls=local_usage.tool_calls,
+            local_in_tokens=local_usage.input_tokens,
+            local_out_tokens=local_usage.output_tokens,
+            local_cost=round(local_usage.estimated_cost_usd, 6),
+            subtree_tool_calls=subtree_usage.tool_calls,
+            subtree_in_tokens=subtree_usage.input_tokens,
+            subtree_out_tokens=subtree_usage.output_tokens,
+            subtree_cost=round(subtree_usage.estimated_cost_usd, 6),
         )
 
     # ── POST /heartbeat/test — run heartbeat subprocess (dev / manual cron) ─
@@ -795,6 +832,7 @@ def create_app(runner: Runner, system_prompt: str) -> FastAPI:
 
                     async def _do_run(ctx: RunContext = ctx) -> None:
                         try:
+                            set_runner(state.runner, ctx)
                             await state.runner.run(ctx)
                         except asyncio.CancelledError:
                             handler.send({"type": "cancelled"})

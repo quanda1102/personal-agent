@@ -53,6 +53,7 @@ import json
 import os
 from typing import Callable
 
+from ..agent.capabilities import summarize_action
 from ..agent.events import Event, TextDelta, ToolUse, UsageDelta
 from ..agent.usage import TurnUsage
 from .openai import OpenAIProvider, _prepare_messages, _to_openai_tools, _STOP_MAP
@@ -229,7 +230,7 @@ class OllamaProvider(OpenAIProvider):
                 tool_id=tc["id"],
                 name=tc["name"],
                 input=tool_input,
-                command=tool_input.get("command", ""),  # backward-compat
+                command=summarize_action(tool_input),
                 turn=turn_num,
             ))
 

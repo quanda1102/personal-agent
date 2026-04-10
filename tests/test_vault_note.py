@@ -102,3 +102,43 @@ def test_note_tag(vault_env: Path):
     n = read_parsed(vault_env, "t.md")
     tags = set(n.fm.get("tags", []))
     assert tags == {"b", "c"}
+
+
+def test_note_patch_replace_once(vault_env: Path):
+    os.environ["HOMEAGENT_VAULT"] = str(vault_env)
+    dispatch(tokenize('note new patch.md --body "alpha\\nbeta\\ngamma"'))
+
+    r = dispatch(
+        tokenize('note patch patch.md --replace "beta" --with "beta updated"')
+    )
+    assert r.exit == 0
+    assert "op: replace" in r.stdout
+
+    note = read_parsed(vault_env, "patch.md")
+    assert "beta updated" in note.body
+    assert "beta\n" not in note.body
+
+
+def test_note_patch_insert_after(vault_env: Path):
+    os.environ["HOMEAGENT_VAULT"] = str(vault_env)
+    dispatch(tokenize('note new insert.md --body "start\\nanchor\\nend"'))
+
+    r = dispatch(
+        tokenize('note patch insert.md --insert-after "anchor" --content "\\nnew line"')
+    )
+    assert r.exit == 0
+    assert "op: insert_after" in r.stdout
+
+    note = read_parsed(vault_env, "insert.md")
+    assert "anchor\nnew line\nend" in note.body
+
+
+def test_note_patch_fails_on_ambiguous_match(vault_env: Path):
+    os.environ["HOMEAGENT_VAULT"] = str(vault_env)
+    dispatch(tokenize('note new ambiguous.md --body "x\\nanchor\\ny\\nanchor\\nz"'))
+
+    r = dispatch(
+        tokenize('note patch ambiguous.md --insert-after "anchor" --content "\\nnew line"')
+    )
+    assert r.exit == 1
+    assert "ambiguous" in r.stdout

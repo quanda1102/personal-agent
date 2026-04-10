@@ -10,7 +10,7 @@ from src.agent.exec_role import (
     note_mutation_blocked,
 )
 from src.agent.executor import Executor, RoleScopedExecutor
-from src.agent.output import Result, ok
+from src.cli_handler.result import Result, ok
 from src.vault.note_commands import dispatch_note
 
 

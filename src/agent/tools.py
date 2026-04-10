@@ -19,6 +19,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Protocol
 
+from .capabilities import (
+    CapabilityPolicy,
+    dispatch_act,
+    make_act_schema,
+    make_restricted_policy,
+    make_top_level_policy,
+)
 
 # ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -111,33 +118,11 @@ class ToolRegistry:
 
 # ── Built-in tools ─────────────────────────────────────────────────────────────
 
-RUN_TOOL_SCHEMA = {
-    "description": "Run a shell command.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "command": {
-                "type": "string",
-                "description": "The shell command to execute.",
-            },
-        },
-        "required": ["command"],
-    },
-}
+def _make_act_tool(policy: CapabilityPolicy) -> ToolFunction:
+    async def _tool(params: dict, context: "RunContext") -> ToolOutput:
+        return await dispatch_act(params, context, policy)
 
-
-async def _run_tool(params: dict, context: "RunContext") -> ToolOutput:
-    """Execute a shell command via context.executor."""
-    command = params.get("command", "")
-    t0 = time.perf_counter()
-    result = await context.executor.exec(command)
-    elapsed = (time.perf_counter() - t0) * 1000
-    return ToolOutput(
-        output=result.render(),
-        exit_code=result.exit,
-        image=getattr(result, "image", None),
-        elapsed_ms=elapsed,
-    )
+    return _tool
 
 
 # ── Factory ────────────────────────────────────────────────────────────────────
@@ -152,6 +137,23 @@ def make_default_registry() -> ToolRegistry:
         coord = make_coordination_registry(mailbox, task_board)
         agent_registry = base.merge(coord)
     """
+    return make_registry_for_policy(make_top_level_policy())
+
+
+def make_registry_for_policy(policy: CapabilityPolicy) -> ToolRegistry:
     registry = ToolRegistry()
-    registry.register("run", _run_tool, RUN_TOOL_SCHEMA)
+    registry.register("act", _make_act_tool(policy), make_act_schema(policy))
     return registry
+
+
+def make_restricted_registry(
+    *,
+    allowed_commands: list[str] | None = None,
+    blocked_commands: list[str] | None = None,
+) -> ToolRegistry:
+    return make_registry_for_policy(
+        make_restricted_policy(
+            allowed_commands=allowed_commands,
+            blocked_commands=blocked_commands,
+        )
+    )

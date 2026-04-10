@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from cli_handler.result import Result, ok, Timer
+from ..cli_handler.result import Result, ok, Timer
 from .config import VaultConfigError, require_vault_root
 from .output_fmt import result_err, vault_ok
 from .paths import UnsafePathError, iter_markdown_files, resolve_safe, to_rel_posix
@@ -21,17 +21,22 @@ from .writer import (
     read_frontmatter_head,
     read_parsed,
     replace_section_body,
+    replace_exact_once,
+    insert_relative_once,
     update_tags_only,
     write_full_replace,
     write_new,
 )
 
 
-NOTE_USAGE = """note: usage: note ls|read|new|write|find|mv|tag
+NOTE_USAGE = """note: usage: note ls|read|new|write|patch|find|mv|tag
   note ls [dir] [--all] [--tag TAG]     — list notes (paths + meta; skips .heartbeat/)
   note read <path> [--max-bytes N]       — frontmatter + body
   note new <path> [--title T] [--tags a,b] [--body TEXT]
   note write <path> [--base-version N] [--append] [--section=H] [--title T] [--tags a,b] [--create] [body...]
+  note patch <path> --replace OLD --with NEW [--base-version N]
+  note patch <path> --insert-after ANCHOR --content TEXT [--base-version N]
+  note patch <path> --insert-before ANCHOR --content TEXT [--base-version N]
   note find <query> [--limit N] [--tag T] [--recent-days D]  (skips .heartbeat/)
   note mv <from> <to>                    — move + patch wikilinks
   note tag <path> --add a,b [--remove x]"""
@@ -98,6 +103,8 @@ def dispatch_note(args: list[str]) -> Result:
             return _cmd_new(rest)
         if sub == "write":
             return _cmd_write(rest)
+        if sub == "patch":
+            return _cmd_patch(rest)
         if sub == "find":
             return _cmd_find(rest)
         if sub in ("mv", "move"):
@@ -331,6 +338,73 @@ def _cmd_find(rest: list[str]) -> Result:
     for h in hits:
         lines.append(f"path: {h.path}\tscore: {h.score:.4f}")
     return ok("\n".join(lines), elapsed_ms=t.elapsed_ms)
+
+
+def _cmd_patch(rest: list[str]) -> Result:
+    vault = require_vault_root()
+    positional, flags = _parse_args(rest)
+    if not positional:
+        return result_err("usage", "note patch: missing path", NOTE_USAGE, exit_code=2)
+
+    rel = positional[0]
+    base_v: int | None = None
+    if flags.get("base-version") is not None:
+        try:
+            base_v = int(flags["base-version"])
+        except ValueError:
+            return result_err("usage", "note patch: --base-version must be an integer", NOTE_USAGE, exit_code=2)
+
+    note = read_parsed(vault, rel)
+    body = note.body
+
+    replace_old = _unescape(flags.get("replace", "") or "")
+    replace_new = _unescape(flags.get("with", "") or "")
+    insert_after = _unescape(flags.get("insert-after", "") or "")
+    insert_before = _unescape(flags.get("insert-before", "") or "")
+    content = _unescape(flags.get("content", "") or "")
+    section = flags.get("section")
+
+    op_count = sum(
+        1 for active in (
+            bool(replace_old),
+            bool(insert_after),
+            bool(insert_before),
+            bool(section),
+        ) if active
+    )
+    if op_count != 1:
+        return result_err(
+            "usage",
+            "note patch: choose exactly one patch mode",
+            NOTE_USAGE,
+            exit_code=2,
+        )
+
+    if replace_old:
+        new_body = replace_exact_once(body, replace_old, replace_new)
+        op_name = "replace"
+    elif insert_after:
+        new_body = insert_relative_once(body, insert_after, content, where="after")
+        op_name = "insert_after"
+    elif insert_before:
+        new_body = insert_relative_once(body, insert_before, content, where="before")
+        op_name = "insert_before"
+    else:
+        new_body = replace_section_body(body, section or "", content)
+        op_name = "section"
+
+    with Timer() as t:
+        updated = write_full_replace(vault, rel, note.fm, new_body, base_version=base_v)
+
+    return ok(
+        vault_ok(
+            path=updated.rel_posix,
+            modified=updated.fm.get("modified"),
+            version=updated.fm.get("version"),
+            op=op_name,
+        ),
+        elapsed_ms=t.elapsed_ms,
+    )
 
 
 def _cmd_mv(rest: list[str]) -> Result:

@@ -20,7 +20,7 @@ from starlette.testclient import TestClient
 
 from src.agent.events import TextDelta, ToolUse, UsageDelta
 from src.agent.loop import Runner
-from src.agent.provider import LLMProvider
+from src.llm_provider.base import LLMProvider
 from src.agent.usage import TurnUsage
 from src.api.server import create_app
 from src.heartbeat.queue_store import reset_queue_store
@@ -48,11 +48,18 @@ class ScriptedToolThenTextProvider(LLMProvider):
         system: str,
         on_event,
         turn_num: int = 1,
+        tools: list[dict] | None = None,
     ) -> TurnUsage:
         usage = TurnUsage(turn=turn_num, model=self.model)
         if turn_num == 1:
             on_event(
-                ToolUse(tool_id="scripted-1", command="memory count", turn=turn_num)
+                ToolUse(
+                    tool_id="scripted-1",
+                    name="act",
+                    command="run_command('memory count')",
+                    turn=turn_num,
+                    input={"op": "run_command", "command": "memory count"},
+                )
             )
             self._last_stop = "tool_use"
         else:
@@ -100,6 +107,12 @@ def test_chat_rest_full_agent_flow(chat_app_env):
     body = r.json()
     assert body["session_id"] == "pytest-chat"
     assert body["tool_calls"] >= 1
+    assert body["local_tool_calls"] == body["tool_calls"]
+    assert body["subtree_tool_calls"] >= body["local_tool_calls"]
+    assert body["local_in_tokens"] == body["in_tokens"]
+    assert body["local_out_tokens"] == body["out_tokens"]
+    assert body["subtree_in_tokens"] >= body["local_in_tokens"]
+    assert body["subtree_out_tokens"] >= body["local_out_tokens"]
     assert "Tool finished." in body["text"]
     assert body["stop_reason"] == "end_turn"
 

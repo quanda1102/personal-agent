@@ -176,6 +176,53 @@ def replace_section_body(body: str, heading: str, replacement: str) -> str:
     return before + mid + after
 
 
+def replace_exact_once(body: str, old: str, new: str) -> str:
+    """
+    Replace exactly one occurrence of `old` in `body`.
+
+    Fail if the target is missing or appears multiple times so callers do not
+    accidentally patch the wrong region.
+    """
+    if not old:
+        raise ValueError("replace target must not be empty")
+    count = body.count(old)
+    if count == 0:
+        raise ValueError("replace target not found")
+    if count > 1:
+        raise ValueError("replace target is ambiguous (matched more than once)")
+    return body.replace(old, new, 1)
+
+
+def insert_relative_once(
+    body: str,
+    anchor: str,
+    content: str,
+    *,
+    where: str = "after",
+) -> str:
+    """
+    Insert `content` before or after exactly one occurrence of `anchor`.
+
+    `where` must be "before" or "after".
+    """
+    if not anchor:
+        raise ValueError("insert anchor must not be empty")
+    count = body.count(anchor)
+    if count == 0:
+        raise ValueError("insert anchor not found")
+    if count > 1:
+        raise ValueError("insert anchor is ambiguous (matched more than once)")
+
+    idx = body.index(anchor)
+    if where == "before":
+        insert_at = idx
+    elif where == "after":
+        insert_at = idx + len(anchor)
+    else:
+        raise ValueError("where must be 'before' or 'after'")
+    return body[:insert_at] + content + body[insert_at:]
+
+
 def update_tags_only(
     vault_root: Path,
     rel: str,

@@ -37,8 +37,52 @@ from typing import Any
 
 from fastapi import WebSocket
 
-from ..agent.events import Event, EventType
+from ..agent.events import Event, EventType, StreamEnd
 from ..agent.handler import StreamHandler
+from ..agent.trace import UsageSnapshot, get_trace_store
+
+
+def _usage_payload(event: StreamEnd) -> tuple[dict[str, int | float], dict[str, int | float]]:
+    trace = get_trace_store().get_run(event.run_id)
+    trace_local = trace.local_usage if trace is not None else UsageSnapshot(
+        input_tokens=event.total_input_tokens,
+        output_tokens=event.total_output_tokens,
+        tool_calls=event.total_tool_calls,
+        estimated_cost_usd=event.estimated_cost_usd,
+    )
+    local = UsageSnapshot(
+        input_tokens=trace_local.input_tokens or event.total_input_tokens,
+        output_tokens=trace_local.output_tokens or event.total_output_tokens,
+        tool_calls=trace_local.tool_calls or event.total_tool_calls,
+        estimated_cost_usd=trace_local.estimated_cost_usd or event.estimated_cost_usd,
+    )
+    subtree = get_trace_store().subtree_usage(event.run_id)
+    if (
+        subtree.input_tokens == 0
+        and subtree.output_tokens == 0
+        and subtree.tool_calls == 0
+        and subtree.estimated_cost_usd == 0.0
+    ):
+        subtree = UsageSnapshot(
+            input_tokens=local.input_tokens,
+            output_tokens=local.output_tokens,
+            tool_calls=local.tool_calls,
+            estimated_cost_usd=local.estimated_cost_usd,
+        )
+    return (
+        {
+            "in_tokens": local.input_tokens,
+            "out_tokens": local.output_tokens,
+            "tool_calls": local.tool_calls,
+            "cost": round(local.estimated_cost_usd, 6),
+        },
+        {
+            "subtree_in_tokens": subtree.input_tokens,
+            "subtree_out_tokens": subtree.output_tokens,
+            "subtree_tool_calls": subtree.tool_calls,
+            "subtree_cost": round(subtree.estimated_cost_usd, 6),
+        },
+    )
 
 
 # ── Event → JSON serialisation ─────────────────────────────────────────────────
@@ -93,14 +137,23 @@ def event_to_dict(event: Event) -> dict:
         }
 
     if t == EventType.STREAM_END:
+        local_usage, subtree_usage = _usage_payload(event)
         return {
             "type":        "stream_end",
             "run_id":      event.run_id,
             "stop_reason": event.stop_reason,
-            "in_tokens":   event.total_input_tokens,
-            "out_tokens":  event.total_output_tokens,
-            "tool_calls":  event.total_tool_calls,
-            "cost":        round(event.estimated_cost_usd, 6),
+            "in_tokens":   local_usage["in_tokens"],
+            "out_tokens":  local_usage["out_tokens"],
+            "tool_calls":  local_usage["tool_calls"],
+            "cost":        local_usage["cost"],
+            "local_in_tokens": local_usage["in_tokens"],
+            "local_out_tokens": local_usage["out_tokens"],
+            "local_tool_calls": local_usage["tool_calls"],
+            "local_cost": local_usage["cost"],
+            "subtree_in_tokens": subtree_usage["subtree_in_tokens"],
+            "subtree_out_tokens": subtree_usage["subtree_out_tokens"],
+            "subtree_tool_calls": subtree_usage["subtree_tool_calls"],
+            "subtree_cost": subtree_usage["subtree_cost"],
             "elapsed_ms":  round(event.elapsed_ms, 0),
         }
 

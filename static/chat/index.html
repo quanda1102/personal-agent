@@ -703,19 +703,40 @@
       }
       assistantEl = null;
       timelineTextEl = null;
+      var localLine =
+        "local tools=" +
+        (msg.local_tool_calls ?? msg.tool_calls ?? "?") +
+        " · cost $" +
+        (msg.local_cost ?? msg.cost ?? "?") +
+        " · tokens in/out " +
+        (msg.local_in_tokens ?? msg.in_tokens ?? "?") +
+        "/" +
+        (msg.local_out_tokens ?? msg.out_tokens ?? "?");
+      var subtreeLine = "";
+      var hasSubtree =
+        msg.subtree_tool_calls != null ||
+        msg.subtree_in_tokens != null ||
+        msg.subtree_out_tokens != null ||
+        msg.subtree_cost != null;
+      if (hasSubtree) {
+        subtreeLine =
+          " · tree tools=" +
+          (msg.subtree_tool_calls ?? "?") +
+          " · tree cost $" +
+          (msg.subtree_cost ?? "?") +
+          " · tree tokens in/out " +
+          (msg.subtree_in_tokens ?? "?") +
+          "/" +
+          (msg.subtree_out_tokens ?? "?");
+      }
       var metaLine =
         "stop=" +
         (msg.stop_reason || "?") +
-        " · tools=" +
-        (msg.tool_calls ?? "?") +
         " · " +
         (msg.elapsed_ms ?? "?") +
-        "ms · cost $" +
-        (msg.cost ?? "?") +
-        " · tokens in/out " +
-        (msg.in_tokens ?? "?") +
-        "/" +
-        (msg.out_tokens ?? "?");
+        "ms · " +
+        localLine +
+        subtreeLine;
       append("meta", metaLine);
       timelineStep("ok", "Kết thúc stream", metaLine);
       return;

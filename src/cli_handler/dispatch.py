@@ -369,7 +369,11 @@ def command_list_prompt() -> str:
     """
     Generate the Level-0 command list injected into the system prompt.
     """
-    lines = ["Custom commands:"]
+    lines = [
+        'Use CLI commands via: act(op="run_command", command="...")',
+        "",
+        "Custom commands:",
+    ]
     for name, desc in CUSTOM_COMMANDS.items():
         lines.append(f"  {name:<16} — {desc}")
 

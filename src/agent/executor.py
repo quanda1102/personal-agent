@@ -96,6 +96,10 @@ class RoleScopedExecutor(Executor):
     def location(self) -> str:
         return f"{self._inner.location}[role={self._role!r}]"
 
+    @property
+    def inner(self) -> Executor:
+        return self._inner
+
 
 # ── SSH executor ───────────────────────────────────────────────────────────────
 

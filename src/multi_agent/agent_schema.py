@@ -77,6 +77,13 @@ from typing import Any
 
 import yaml
 
+from ..agent.exec_role import (
+    ROLE_CONVERSATION,
+    ROLE_FULL,
+    ROLE_HEARTBEAT,
+    ROLE_VAULT_EDITOR,
+)
+
 
 # ── Agent definition dataclass ─────────────────────────────────────────────────
 
@@ -112,6 +119,7 @@ class AgentDef:
     max_turns:        int | None       = None
     max_tools:        int | None       = None
     background:       bool             = False
+    execution_role:   str | None       = None
     # TODO: permission_mode: str = "auto"   # "auto" | "confirm" | "plan_first"
     # TODO: isolation: str = "shared"        # "shared" | "sandboxed"
     # TODO: memory_instructions: str = ""    # per-agent memory guidance
@@ -134,6 +142,14 @@ def validate_agent_def(agent: AgentDef) -> list[str]:
 
     if agent.max_tools is not None and agent.max_tools < 1:
         errors.append(f"max_tools must be >= 1, got {agent.max_tools}")
+
+    if agent.execution_role is not None and agent.execution_role not in {
+        ROLE_FULL,
+        ROLE_CONVERSATION,
+        ROLE_HEARTBEAT,
+        ROLE_VAULT_EDITOR,
+    }:
+        errors.append(f"unknown execution_role: {agent.execution_role!r}")
 
     # Check for conflicts: same command in both allowed and blocked
     if agent.allowed_commands and agent.blocked_commands:
@@ -169,6 +185,15 @@ def load_agent(identifier: str, agents_dir: Path | None = None) -> AgentDef | No
     for ext in (".yaml", ".yml"):
         path = agents_dir / f"{identifier}{ext}"
         if path.is_file():
+            return _parse_agent_file(path)
+
+    ident_lower = identifier.lower()
+    for path in agents_dir.iterdir():
+        if not path.is_file():
+            continue
+        if path.suffix not in (".yaml", ".yml"):
+            continue
+        if path.stem.lower() == ident_lower:
             return _parse_agent_file(path)
 
     return None
@@ -247,7 +272,8 @@ def _resolve_agents_dir(agents_dir: Path | None) -> Path | None:
       1. Explicit agents_dir argument
       2. OPENCLAWD_AGENTS_DIR env var
       3. {HOMEAGENT_VAULT}/.agents/
-      4. ./agents/ relative to cwd
+      4. ./.agents/ relative to cwd
+      5. ./agents/ relative to cwd
     """
     if agents_dir is not None:
         return agents_dir if agents_dir.is_dir() else None
@@ -266,7 +292,11 @@ def _resolve_agents_dir(agents_dir: Path | None) -> Path | None:
         if p.is_dir():
             return p
 
-    # CWD fallback
+    # CWD fallback: dotdir first, then plain dir
+    p = Path.cwd() / ".agents"
+    if p.is_dir():
+        return p
+
     p = Path.cwd() / "agents"
     if p.is_dir():
         return p
@@ -305,6 +335,7 @@ def _parse_agent_file(path: Path) -> AgentDef | None:
         max_turns        = data.get("max_turns"),
         max_tools        = data.get("max_tools"),
         background       = data.get("background", False),
+        execution_role   = data.get("execution_role"),
     )
 
     # ── Validate ──────────────────────────────────────────────────────────

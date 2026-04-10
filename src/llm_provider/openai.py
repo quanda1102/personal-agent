@@ -54,6 +54,7 @@ from typing import Callable
 import openai as _openai
 
 from ..agent.events import Event, TextDelta, ToolUse, UsageDelta
+from ..agent.capabilities import summarize_action
 from ..llm_provider.base import LLMProvider, RUN_TOOL
 from ..agent.usage import TurnUsage
 
@@ -242,7 +243,7 @@ class OpenAIProvider(LLMProvider):
                 tool_id=tc["id"],
                 name=tc["name"],
                 input=tool_input,
-                command=tool_input.get("command", ""),  # backward-compat
+                command=summarize_action(tool_input),
                 turn=turn_num,
             ))
 

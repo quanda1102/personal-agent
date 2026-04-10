@@ -7,10 +7,10 @@ import time
 from starlette.testclient import TestClient
 
 from src.agent.loop import Runner
-from src.agent.provider import LLMProvider
 from src.agent.usage import TurnUsage
 from src.api.server import create_app
 from src.heartbeat.queue_store import get_queue_store, reset_queue_store
+from src.llm_provider.base import LLMProvider
 
 
 class _Noop(LLMProvider):

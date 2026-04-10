@@ -15,6 +15,7 @@ from contextvars import ContextVar
 ROLE_FULL = "full"
 ROLE_CONVERSATION = "conversation"
 ROLE_HEARTBEAT = "heartbeat"
+ROLE_VAULT_EDITOR = "vault_editor"
 
 EXECUTION_ROLE: ContextVar[str] = ContextVar("execution_role", default=ROLE_FULL)
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from cli_handler.result import Result, ok, err
+from ..cli_handler.result import Result, ok, err
 
 
 def vault_ok(**fields: Any) -> str:
