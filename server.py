@@ -74,6 +74,8 @@ from src.agent.prompt  import PromptBuilder
 from src.agent.handler import CLIStreamHandler
 from src.llm_provider.chat_provider import build_chat_provider
 from src.api.server          import create_app
+from src.multi_agent.spawn import set_runner
+
 
 HOST = os.environ.get("OPENCLAWD_OLLAMA_HOST", "http://localhost:11434")
 SEP = "─" * 60
@@ -147,6 +149,7 @@ async def cli_chat(runner: Runner, system_prompt: str, model: str | None, debug:
         )
 
         try:
+            set_runner(runner, ctx)
             usage = await runner.run(ctx)
         except KeyboardInterrupt:
             print("\n[interrupted — history kept]")
